@@ -1,0 +1,168 @@
+import { gameState } from "../../state/stateManagers.js";
+import { colorizeBackground, audioManager } from "../../utils.js";
+import { createTutorialDialog } from "../tutorialDialog.js";
+
+export function tutorial() {
+  colorizeBackground();
+  audioManager.stop();
+  audioManager.playMusic("rpg-main-bgm", 0.5);
+
+  setGravity(0);
+
+  const map = addLevel([
+    "%%%%%%%%",
+    "%   N  %",
+    "%  S   %",
+    "%  P   %",
+    "%   L  %",
+    "%%%%%%%%",
+  ], {
+    tileWidth: 64,
+    tileHeight: 64,
+    tiles: {
+      "%": () => [
+        sprite("tile"),
+        area(),
+        solid(),
+      ],
+      "S": () => [
+        sprite("friend"),
+        area({ width: 30, height: 86 }),
+        "student",
+        {
+          name: "친구",
+          defaultDialog: "안녕? 어떻게 지내?",
+          hasInteracted: false
+        }
+      ],
+      "N": () => [
+        sprite("exclamation"),
+        area({ width: 25, height: 25 }),
+        "note",
+        {
+          defaultDialog: "쪽지가 떨어져 있다...",
+          hasInteracted: false
+        }
+      ],
+      "L": () => [
+        sprite("exclamation"),
+        area({ width: 25, height: 25 }),
+        "letter",
+        {
+          defaultDialog: "편지가 떨어져 있다.",
+          hasInteracted: false
+        }
+      ],
+    }
+  });
+
+  const player = add([
+    sprite("player"),
+    pos(192, 192),
+    area(),
+    body(),
+    "player"
+  ]);
+
+  const tutorialDialog = createTutorialDialog();
+
+  let currentStep = 0;
+  const totalSteps = 10;
+  let hasPlayerMoved = false;
+
+  function advanceStep() {
+    currentStep++;
+    
+    if (currentStep === 1) {
+      // Movement tutorial
+      tutorialDialog.showHelperText("방향키로 움직여보세요");
+    } else if (currentStep === 2) {
+      // Student interaction tutorial
+      tutorialDialog.showHelperText("학생에게 가서 스페이스 키를 눌러보세요");
+    } else if (currentStep === 3) {
+      // Note interaction tutorial
+      tutorialDialog.showHelperText("쪽지에 가서 스페이스 키를 눌러보세요");
+    } else if (currentStep >= totalSteps) {
+      tutorialDialog.showCompletionMessage();
+    }
+  }
+
+  // Initialize tutorial
+  advanceStep();
+
+  // Single onUpdate for movement
+  onUpdate(() => {
+    // Player movement
+    if (isKeyDown("left") || isKeyDown("a")) {
+      player.move(-160, 0);
+      if (!hasPlayerMoved) {
+        hasPlayerMoved = true;
+        if (currentStep === 1) {
+          advanceStep();
+        }
+      }
+    }
+    if (isKeyDown("right") || isKeyDown("d")) {
+      player.move(160, 0);
+      if (!hasPlayerMoved) {
+        hasPlayerMoved = true;
+        if (currentStep === 1) {
+          advanceStep();
+        }
+      }
+    }
+    if (isKeyDown("up") || isKeyDown("w")) {
+      player.move(0, -160);
+      if (!hasPlayerMoved) {
+        hasPlayerMoved = true;
+        if (currentStep === 1) {
+          advanceStep();
+        }
+      }
+    }
+    if (isKeyDown("down") || isKeyDown("s")) {
+      player.move(0, 160);
+      if (!hasPlayerMoved) {
+        hasPlayerMoved = true;
+        if (currentStep === 1) {
+          advanceStep();
+        }
+      }
+    }
+  });
+
+  // Space key interactions
+  onKeyPress("space", () => {
+    const nearbyStudent = get("student").find(s => 
+      s.pos.dist(player.pos) < 50
+    );
+    
+    const nearbyNote = get("note").find(n => 
+      n.pos.dist(player.pos) < 50
+    );
+
+    const nearbyLetter = get("letter").find(l => 
+      l.pos.dist(player.pos) < 50
+    );
+
+    if (nearbyStudent && currentStep === 2) {
+      tutorialDialog.startStudentDialog(() => {
+        advanceStep();
+      });
+    } else if (nearbyNote && currentStep === 3) {
+      tutorialDialog.startNoteDialog(() => {
+        advanceStep();
+      });
+    } else if (nearbyLetter) {
+      tutorialDialog.startLetterDialog(() => {
+        advanceStep();
+      });
+    }
+  });
+
+  // Exit on escape
+  onKeyPress("escape", () => {
+    tutorialDialog.cleanup();
+    go("main");
+  });
+}

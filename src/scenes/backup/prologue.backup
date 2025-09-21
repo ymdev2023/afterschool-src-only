@@ -1,0 +1,277 @@
+import { gameState } from "../state/stateManagers.js";
+import { colorizeBackground } from "../utils.js";
+
+export default function prologue(k) {
+    // 검은색 배경
+    colorizeBackground(k, 0, 0, 0);
+    
+    // 문서 배경도 검은색으로 설정
+    document.body.style.backgroundColor = 'black';
+
+    const currentLocale = gameState.getLocale() ?? "korean";
+    const currentFont = currentLocale === "korean" ? "neodgm" : "gameboy";
+
+    // 프롤로그 대화 내용
+    const prologueLines = [
+        { text: "학생 이름이 어떻게 되시나요?", type: "question" },
+        { text: "(... 일단 적으라기에 적었는데...)", type: "thought" },
+        { text: "(내가 학생이라고? 뭐지... 난 분명...)", type: "thought" },
+        { text: "...", type: "pause" },
+        { text: "???아!", type: "dialogue", speaker: "??" },
+        { text: "???!!!! 학교 가야지!!!!", type: "dialogue", speaker: "??" },
+        { text: "엄마가 지각하지 말라고 몇번을 얘기했어?!", type: "dialogue", speaker: "??" },
+        { text: "당장 안튀어가?!", type: "dialogue", speaker: "??" },
+        { text: "(저 목소리는 누구지...? 뭐지...? 난 분명...!)", type: "thought" },
+        { text: "(일단 가보자...!)", type: "thought" }
+    ];
+
+    let currentLineIndex = 0;
+    let isTyping = false;
+    let canProceed = false;
+    let typingSpeed = 50; // 타이핑 속도 (ms)
+    
+    // 현재 표시되는 텍스트
+    let currentText = k.add([
+        k.text("", { 
+            size: 24, 
+            font: currentFont,
+            width: k.width() - 100 
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y),
+        k.color(255, 255, 255),
+    ]);
+
+    // 화자 표시 (대화일 때만)
+    let speakerText = k.add([
+        k.text("", { 
+            size: 20, 
+            font: currentFont 
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y - 60),
+        k.color(255, 255, 0),
+    ]);
+
+    // 프롬프트 표시 (키 입력 대기)
+    let promptText = k.add([
+        k.text("▼ 아무 키나 누르세요", { 
+            size: 16, 
+            font: currentFont 
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y + 80),
+        k.color(150, 150, 150),
+        k.opacity(0),
+    ]);
+
+    // 이름 입력 관련
+    let playerName = "";
+    let isInputting = false;
+    let inputText = k.add([
+        k.text("", { 
+            size: 24, 
+            font: currentFont 
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y + 40),
+        k.color(255, 255, 255),
+        k.opacity(0),
+    ]);
+
+    let inputPrompt = k.add([
+        k.text("이름을 입력하고 ENTER를 누르세요", { 
+            size: 18, 
+            font: currentFont 
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y + 80),
+        k.color(200, 200, 200),
+        k.opacity(0),
+    ]);
+
+    // 타이핑 효과 함수
+    function typeText(line) {
+        isTyping = true;
+        canProceed = false;
+        currentText.text = "";
+        
+        // 화자 설정
+        if (line.type === "dialogue" && line.speaker) {
+            speakerText.text = line.speaker;
+            speakerText.opacity = 1;
+        } else {
+            speakerText.opacity = 0;
+        }
+
+        // 텍스트 색상 설정
+        if (line.type === "thought") {
+            currentText.color = k.rgb(180, 180, 180); // 회색 (생각)
+        } else if (line.type === "dialogue") {
+            currentText.color = k.rgb(255, 255, 255); // 흰색 (대화)
+        } else {
+            currentText.color = k.rgb(255, 255, 255); // 기본 흰색
+        }
+
+        let displayText = line.text;
+        // 플레이어 이름 치환
+        if (playerName && displayText.includes("???")) {
+            displayText = displayText.replace(/\?\?\?/g, playerName);
+        }
+
+        let charIndex = 0;
+        
+        function addChar() {
+            if (charIndex < displayText.length) {
+                currentText.text = displayText.substring(0, charIndex + 1);
+                charIndex++;
+                
+                // 타이핑 효과음 재생
+                if (charIndex % 2 === 0) { // 2글자마다 효과음
+                    k.play("talk-sfx");
+                }
+                
+                k.wait(typingSpeed / 1000, addChar);
+            } else {
+                // 타이핑 완료
+                isTyping = false;
+                canProceed = true;
+                
+                // 프롬프트 표시 (이름 입력이 아닐 때만)
+                if (!isInputting) {
+                    promptText.opacity = 1;
+                    // 프롬프트 깜빡임 효과
+                    k.loop(0.8, () => {
+                        if (!isTyping && canProceed) {
+                            promptText.opacity = promptText.opacity > 0 ? 0 : 1;
+                        }
+                    });
+                }
+            }
+        }
+        
+        addChar();
+    }
+
+    // 이름 입력 처리
+    function startNameInput() {
+        isInputting = true;
+        inputText.opacity = 1;
+        inputPrompt.opacity = 1;
+        promptText.opacity = 0;
+        
+        inputText.text = "> " + playerName + "_";
+        
+        // 깜빡이는 커서 효과
+        k.loop(0.5, () => {
+            if (isInputting) {
+                const cursorVisible = inputText.text.endsWith("_");
+                inputText.text = "> " + playerName + (cursorVisible ? " " : "_");
+            }
+        });
+    }
+
+    // 이름 저장 함수
+    function savePlayerData() {
+        const saveData = {
+            playerName: playerName,
+            timestamp: new Date().toISOString(),
+            currentScene: "prologue",
+            // 나중에 플레이어 위치, 인벤토리 등 추가 예정
+        };
+        
+        // localStorage에 저장
+        localStorage.setItem("afterschoolrpg_save", JSON.stringify(saveData));
+        console.log("플레이어 데이터 저장됨:", saveData);
+        
+        // 게임 상태에도 저장
+        gameState.playerName = playerName;
+    }
+
+    // 다음 라인으로 진행
+    function proceedToNext() {
+        if (!canProceed || isTyping) return;
+        
+        promptText.opacity = 0;
+        currentLineIndex++;
+        
+        if (currentLineIndex < prologueLines.length) {
+            k.wait(0.3, () => {
+                typeText(prologueLines[currentLineIndex]);
+            });
+        } else {
+            // 프롤로그 종료 - title.js로 이동
+            k.wait(1, () => {
+                k.go("title");
+            });
+        }
+    }
+
+    // 키보드 입력 처리
+    k.onCharInput((char) => {
+        if (isInputting && char.match(/[a-zA-Z가-힣0-9\s]/)) {
+            if (playerName.length < 10) { // 최대 10글자
+                playerName += char;
+                inputText.text = "> " + playerName + "_";
+            }
+        }
+    });
+
+    k.onKeyPress("backspace", () => {
+        if (isInputting && playerName.length > 0) {
+            playerName = playerName.slice(0, -1);
+            inputText.text = "> " + playerName + "_";
+        }
+    });
+
+    k.onKeyPress("enter", () => {
+        if (isInputting) {
+            if (playerName.trim().length > 0) {
+                // 이름 입력 완료
+                isInputting = false;
+                inputText.opacity = 0;
+                inputPrompt.opacity = 0;
+                
+                // 이름 저장
+                savePlayerData();
+                
+                // 다음 라인으로
+                k.wait(0.5, () => {
+                    proceedToNext();
+                });
+            }
+        } else if (canProceed && !isTyping) {
+            proceedToNext();
+        }
+    });
+
+    // 다른 키 입력 (ENTER 제외)
+    k.onKeyPress(() => {
+        if (!isInputting && canProceed && !isTyping) {
+            proceedToNext();
+        }
+    });
+
+    // 첫 번째 라인 시작
+    k.wait(1, () => {
+        typeText(prologueLines[currentLineIndex]);
+        
+        // 첫 번째 라인이 완료되면 이름 입력 시작
+        const checkFirstLine = () => {
+            if (currentLineIndex === 0 && canProceed && !isTyping) {
+                k.wait(1, () => {
+                    startNameInput();
+                });
+            } else if (currentLineIndex === 0) {
+                k.wait(0.1, checkFirstLine);
+            }
+        };
+        checkFirstLine();
+    });
+
+    // 씬 정리
+    k.onSceneLeave(() => {
+        document.body.style.backgroundColor = '';
+        console.log("✅ Prologue 씬 종료");
+    });
+}

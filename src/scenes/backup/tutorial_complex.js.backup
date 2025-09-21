@@ -1,0 +1,1090 @@
+import { gameState } from "../../state/stateManagers.js";
+import { colorizeBackground, audioManager } from "../../utils.js";
+import { createTutorialDialog } from "../tutorialDialog.js";
+
+export default function tutorial(k) {
+    console.log("🎓 Tutorial 씬 시작");
+    
+    // 기존 BGM 정지 및 새 BGM 재생
+    audioManager.stopBGM();
+    audioManager.playBGM("rpg-main-bgm");
+    
+    // 검은색 배경
+    colorizeBackground(k, 0, 0, 0);
+    
+    // 문서 배경도 검은색으로 설정
+    document.body.style.backgroundColor = 'black';
+    
+    // JavaScript로 페이드 인 효과
+    const fadeInOverlay = document.createElement('div');
+    fadeInOverlay.style.position = 'fixed';
+    fadeInOverlay.style.top = '0';
+    fadeInOverlay.style.left = '0';
+    fadeInOverlay.style.width = '100vw';
+    fadeInOverlay.style.height = '100vh';
+    fadeInOverlay.style.backgroundColor = 'black';
+    fadeInOverlay.style.opacity = '1';
+    fadeInOverlay.style.zIndex = '10000';
+    fadeInOverlay.style.pointerEvents = 'none';
+    fadeInOverlay.style.transition = 'opacity 2s ease-out';
+    document.body.appendChild(fadeInOverlay);
+    
+    console.log("🌅 Tutorial 페이드 인 시작");
+    
+    // 페이드 인 시작
+    setTimeout(() => {
+        fadeInOverlay.style.opacity = '0';
+        console.log("🌅 Tutorial 페이드 진행: 시작");
+    }, 50);
+    
+    // 페이드 인 완료 후 오버레이 제거
+    setTimeout(() => {
+        console.log("✨ Tutorial Fade In 완료");
+        if (fadeInOverlay && fadeInOverlay.parentNode) {
+            document.body.removeChild(fadeInOverlay);
+        }
+    }, 2100);
+
+    // 패턴 배경 추가
+    const patterns = [];
+    const patternSize = 1280;
+    const screenWidth = k.width();
+    const screenHeight = k.height();
+    const extraPadding = patternSize;
+    
+    for (let x = -extraPadding; x <= screenWidth + extraPadding; x += patternSize) {
+        for (let y = -extraPadding; y <= screenHeight + extraPadding; y += patternSize) {
+            const pattern = k.add([
+                k.sprite("pattern_lightgreen"),
+                k.pos(x, y),
+                k.z(0),
+                k.fixed(),
+            ]);
+            patterns.push(pattern);
+        }
+    }
+
+    // 패턴 애니메이션
+    const patternSpeed = 30;
+    k.onUpdate(() => {
+        patterns.forEach(pattern => {
+            pattern.pos.x -= patternSpeed * k.dt();
+            pattern.pos.y += patternSpeed * k.dt();
+            
+            if (pattern.pos.x <= -patternSize) {
+                pattern.pos.x += patternSize * Math.ceil((screenWidth + extraPadding * 2) / patternSize);
+            }
+            if (pattern.pos.y >= screenHeight + patternSize) {
+                pattern.pos.y -= patternSize * Math.ceil((screenHeight + extraPadding * 2) / patternSize);
+            }
+        });
+    });
+
+    // TUTORIAL 타이틀
+    const titleText = k.add([
+        k.text("TUTORIAL", { 
+            size: 38,
+            font: "gameboy"
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, 120),
+        k.color(105, 215, 23),
+        k.z(10),
+        k.fixed(),
+    ]);
+
+    // 초기 텍스트
+    const centerText = k.add([
+        k.text("튜 토 리 얼 을  시 작 합 니 다 .", { 
+            size: 26,
+            font: "galmuri"
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y),
+        k.color(111, 111, 111),
+        k.opacity(0),
+        k.z(10),
+        k.fixed(),
+    ]);
+
+    // 게임 오브젝트 변수들
+    let player = null;
+    let npc = null;
+    let isNearNPC = false;
+    let exclamationMark = null;
+    let tutorialText = null;
+    let tutorialStep = 0;
+    let hasPlayerMoved = false;
+    let documentKeyHandler = null;
+    
+    // 이동 관련 변수
+    const MOVE_SPEED = 120;
+    const CENTER_X = k.center().x;
+    const CENTER_Y = k.center().y;
+    const MOVE_RADIUS = 100;
+    let currentAnimDirection = "down";
+    let isCurrentlyMoving = false;
+    let keyStates = {
+        left: false,
+        right: false,
+        up: false,
+        down: false
+    };
+    
+    // 이동 추적 변수
+    let movementTracking = {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        startTime: null,
+        indicators: {},
+        directionTimes: {
+            left: 0,
+            right: 0,
+            up: 0,
+            down: 0
+        },
+        requiredTime: 500
+    };
+
+    // 1단계: 초기 텍스트 표시
+    k.wait(2.5, () => {
+        console.log("🎓 튜토리얼 초기 텍스트 fade in 시작");
+        
+        k.tween(centerText.opacity, 1, 1, (val) => {
+            centerText.opacity = val;
+        }).then(() => {
+            console.log("🎓 초기 텍스트 표시 완료");
+            
+            k.wait(1, () => {
+                k.tween(centerText.opacity, 0, 1, (val) => {
+                    centerText.opacity = val;
+                }).then(() => {
+                    console.log("🎓 초기 텍스트 fade out 완료");
+                    k.wait(0.5, () => {
+                        startCharacterTutorial();
+                    });
+                });
+            });
+        });
+    });
+
+    function startCharacterTutorial() {
+        tutorialStep = 1;
+        centerText.opacity = 0;
+        
+        // 플레이어 생성
+        player = k.add([
+            k.sprite("main-assets", { anim: "player-idle-down" }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.center().y),
+            k.scale(0.1),
+            k.area({ width: 86, height: 86 }),
+            k.body(),
+            k.opacity(0),
+            k.z(20),
+            "player"
+        ]);
+        
+        // 튜토리얼 텍스트
+        tutorialText = k.add([
+            k.text("화살표 키를 눌러 상하좌우로 움직여보세요.", { 
+                size: 20,
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120),
+            k.color(50, 200, 50),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        createMovementIndicators();
+        
+        // 플레이어 등장 애니메이션
+        k.tween(player.scale, k.vec2(3.6, 3.6), 1.2, (val) => {
+            player.scale = val;
+        }, k.easings.easeOutBack);
+        
+        k.tween(player.opacity, 1, 1.2, (val) => {
+            player.opacity = val;
+        });
+        
+        k.wait(0.8, () => {
+            k.tween(tutorialText.opacity, 1, 0.8, (val) => {
+                tutorialText.opacity = val;
+            });
+            
+            k.wait(0.2, () => {
+                showMovementIndicators();
+                movementTracking.startTime = Date.now();
+            });
+        });
+    }
+
+    function createMovementIndicators() {
+        const baseY = k.height() - 160;
+        const centerX = k.center().x;
+        const spacing = 60;
+        
+        const directions = [
+            { key: 'left', pos: { x: centerX - spacing * 1.5, y: baseY }, symbol: '←' },
+            { key: 'right', pos: { x: centerX - spacing * 0.5, y: baseY }, symbol: '→' },
+            { key: 'up', pos: { x: centerX + spacing * 0.5, y: baseY }, symbol: '↑' },
+            { key: 'down', pos: { x: centerX + spacing * 1.5, y: baseY }, symbol: '↓' }
+        ];
+        
+        directions.forEach(dir => {
+            const bgCircle = k.add([
+                k.circle(16),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(60, 60, 60),
+                k.opacity(0),
+                k.z(15),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            const completeCircle = k.add([
+                k.circle(16),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(50, 200, 50),
+                k.opacity(0),
+                k.z(16),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            const dirText = k.add([
+                k.text(dir.symbol, {
+                    size: 20,
+                    font: "galmuri"
+                }),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(255, 255, 255),
+                k.opacity(0),
+                k.z(17),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            movementTracking.indicators[dir.key] = {
+                background: bgCircle,
+                complete: completeCircle,
+                text: dirText,
+                completed: false
+            };
+        });
+    }
+    
+    function showMovementIndicators() {
+        Object.values(movementTracking.indicators).forEach(indicator => {
+            k.tween(indicator.background.opacity, 0.7, 0.5, (val) => {
+                indicator.background.opacity = val;
+            });
+            k.tween(indicator.text.opacity, 1, 0.5, (val) => {
+                indicator.text.opacity = val;
+            });
+        });
+    }
+    
+    function markDirectionComplete(direction) {
+        if (movementTracking.indicators[direction] && !movementTracking.indicators[direction].completed) {
+            movementTracking.indicators[direction].completed = true;
+            movementTracking[direction] = true;
+            
+            const indicator = movementTracking.indicators[direction];
+            
+            k.tween(indicator.complete.opacity, 0.9, 0.5, (val) => {
+                indicator.complete.opacity = val;
+            });
+            
+            k.tween(indicator.text.color.r, 0, 0.5, (val) => {
+                indicator.text.color = k.rgb(val, val, val);
+            });
+            
+            console.log(`✅ 방향 완료: ${direction}`);
+            checkMovementCompletion();
+        }
+    }
+    
+    function updateDirectionTime(direction, deltaTime) {
+        if (!movementTracking.indicators[direction].completed) {
+            movementTracking.directionTimes[direction] += deltaTime;
+            
+            if (movementTracking.directionTimes[direction] >= movementTracking.requiredTime) {
+                markDirectionComplete(direction);
+            }
+        }
+    }
+    
+    function checkMovementCompletion() {
+        const allDirectionsComplete = movementTracking.left && 
+                                    movementTracking.right && 
+                                    movementTracking.up && 
+                                    movementTracking.down;
+        
+        if (allDirectionsComplete) {
+            console.log("🎉 모든 방향 이동 완료!");
+            k.destroyAll("movementIndicator");
+            
+            k.wait(0.3, () => {
+                showWellDoneMessage();
+            });
+        }
+    }
+
+    function showWellDoneMessage() {
+        tutorialStep = 2;
+        k.destroyAll("movementIndicator");
+        
+        if (player) {
+            player.play("player-idle-down");
+            currentAnimDirection = "down";
+            isCurrentlyMoving = false;
+            
+            keyStates = {
+                left: false,
+                right: false,
+                up: false,
+                down: false
+            };
+            
+            movementTracking = {
+                left: false,
+                right: false,
+                up: false,
+                down: false,
+                startTime: null,
+                indicators: {},
+                directionTimes: {
+                    left: 0,
+                    right: 0,
+                    up: 0,
+                    down: 0
+                },
+                requiredTime: 500
+            };
+        }
+        
+        k.tween(tutorialText.opacity, 0, 1, (val) => {
+            tutorialText.opacity = val;
+        }).then(() => {
+            const wellDoneText = k.add([
+                k.text("잘했습니다!", { 
+                    size: 28,
+                    font: "galmuri",
+                    align: "center"
+                }),
+                k.anchor("center"),
+                k.pos(k.center().x, k.height() - 120),
+                k.color(50, 200, 50),
+                k.opacity(0),
+                k.z(10),
+                k.fixed(),
+            ]);
+            
+            k.tween(wellDoneText.opacity, 1, 1, (val) => {
+                wellDoneText.opacity = val;
+            }).then(() => {
+                k.wait(2, () => {
+                    k.tween(wellDoneText.opacity, 0, 1, (val) => {
+                        wellDoneText.opacity = val;
+                    }).then(() => {
+                        wellDoneText.destroy();
+                        showNPCAndDialogueTutorial();
+                    });
+                });
+            });
+        });
+    }
+
+    function showNPCAndDialogueTutorial() {
+        tutorialStep = 3;
+        
+        // 쪽지 생성 (콜라이더 조정)
+        npc = k.add([
+            k.sprite("main-assets", { frame: 5378 }),
+            k.anchor("center"),
+            k.pos(player.pos.x - 120, player.pos.y),
+            k.scale(3.6),
+            k.area({ width: 25, height: 25 }), // 작은 콜라이더
+            k.body({ isStatic: true }),
+            k.opacity(0),
+            k.z(20),
+            "npc",
+            "letter"
+        ]);
+        
+        k.tween(npc.opacity, 1, 1, (val) => {
+            npc.opacity = val;
+        }).then(() => {
+            showDialogueTutorialText();
+        });
+    }
+
+    function showDialogueTutorialText() {
+        tutorialStep = 4;
+        
+        const dialogueText = k.add([
+            k.text("쪽지와 같은 사물도 똑같이 스페이스를 눌러 상호작용 할 수 있습니다!", { 
+                size: 20,
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120),
+            k.color(50, 200, 50),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        k.tween(dialogueText.opacity, 1, 1, (val) => {
+            dialogueText.opacity = val;
+        });
+    }
+
+    function handleLetterInteraction() {
+        console.log("🏆 Letter 상호작용 완료!");
+        tutorialStep = 5;
+        
+        k.destroyAll("tutorialText");
+        
+        const letterComplete = k.add([
+            k.text("잘했습니다!", {
+                font: "galmuri",
+                size: 28,
+                align: "center"
+            }),
+            k.color(50, 200, 50),
+            k.pos(k.center().x, k.height() - 120),
+            k.anchor("center"),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        k.tween(letterComplete.opacity, 1, 1, (val) => {
+            letterComplete.opacity = val;
+        }).then(() => {
+            k.wait(2, () => {
+                k.tween(letterComplete.opacity, 0, 1, (val) => {
+                    letterComplete.opacity = val;
+                }).then(() => {
+                    letterComplete.destroy();
+                    showFriendTutorial();
+                });
+            });
+        });
+    }
+
+    function showFriendTutorial() {
+        tutorialStep = 6;
+        
+        if (npc) {
+            npc.destroy();
+        }
+        
+        // 친구 생성 (콜라이더 조정)
+        npc = k.add([
+            k.sprite("main-assets", { frame: 3781 }),
+            k.anchor("center"),
+            k.pos(player.pos.x + 120, player.pos.y),
+            k.scale(3.6),
+            k.area({ width: 30, height: 86 }), // 사람 크기 콜라이더
+            k.body({ isStatic: true }),
+            k.opacity(0),
+            k.z(20),
+            "npc",
+            "student1"
+        ]);
+        
+        k.tween(npc.opacity, 1, 1, (val) => {
+            npc.opacity = val;
+        }).then(() => {
+            showFriendTutorialText();
+        });
+    }
+
+    function showFriendTutorialText() {
+        tutorialStep = 7;
+        
+        const friendText = k.add([
+            k.text("친구에게 다가가서 스페이스바를 눌러 말을 거세요.", { 
+                size: 20,
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120),
+            k.color(50, 200, 50),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        k.tween(friendText.opacity, 1, 1, (val) => {
+            friendText.opacity = val;
+        });
+    }
+
+    function handleNPCInteraction() {
+        if (npc && tutorialStep === 7) {
+            // 말풍선 애니메이션
+            exclamationMark = k.add([
+                k.sprite("main-assets", { frame: 5776 }),
+                k.pos(npc.pos.x, npc.pos.y - 60),
+                k.anchor("center"),
+                k.scale(2),
+                k.z(1000),
+                "bubble-indicator"
+            ]);
+            
+            k.tween(exclamationMark.scale, k.vec2(2.5, 2.5), 0.3, (val) => {
+                exclamationMark.scale = val;
+            }, k.easings.easeOutBack);
+            
+            // 흔들기 효과
+            const originalX = exclamationMark.pos.x;
+            let shakeCount = 0;
+            const shakeInterval = setInterval(() => {
+                if (exclamationMark && shakeCount < 6) {
+                    const shakeAmount = 3;
+                    exclamationMark.pos.x = originalX + (shakeCount % 2 === 0 ? shakeAmount : -shakeAmount);
+                    shakeCount++;
+                } else {
+                    clearInterval(shakeInterval);
+                    if (exclamationMark) {
+                        exclamationMark.pos.x = originalX;
+                    }
+                }
+            }, 100);
+            
+            k.wait(1, () => {
+                if (exclamationMark) {
+                    exclamationMark.destroy();
+                    exclamationMark = null;
+                }
+                startTutorialDialog();
+            });
+        }
+    }
+
+    // 완전한 대화 시스템
+    function startTutorialDialog() {
+        console.log("🎭 튜토리얼 대화 시작");
+        
+        const dialogData = [
+            { character: "???", text: "..." },
+            { character: "???", text: "......" },
+            { character: "???", text: "...깜짝이야!!!" }
+        ];
+        
+        const shiftDialogData = [
+            { character: "???", text: "뭐야 넌! 처음보는 얼굴인데." },
+            { character: "???", text: "왜 날 방해하는거야?" }
+        ];
+        
+        let currentDialogIndex = 0;
+        let isDialogActive = true;
+        let dialogBox = null;
+        let dialogText = null;
+        let nameText = null;
+        let helpText = null;
+        let helpTextVisible = false;
+        let helpTextTimer = null;
+        let isShiftTutorial = false;
+        
+        function createDialogBox() {
+            // 대화창 배경
+            dialogBox = k.add([
+                k.rect(k.width() - 120, 160),
+                k.pos(60, k.height() - 200),
+                k.color(0, 0, 0),
+                k.opacity(0.8),
+                k.z(2000),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 테두리
+            k.add([
+                k.rect(k.width() - 120, 160),
+                k.pos(60, k.height() - 200),
+                k.outline(3, k.rgb(255, 255, 255)),
+                k.z(2001),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 이름 탭
+            k.add([
+                k.rect(120, 40),
+                k.pos(80, k.height() - 220),
+                k.color(50, 50, 50),
+                k.z(2002),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            k.add([
+                k.rect(120, 40),
+                k.pos(80, k.height() - 220),
+                k.outline(2, k.rgb(255, 255, 255)),
+                k.z(2003),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            nameText = k.add([
+                k.text("???", {
+                    size: 18,
+                    font: "galmuri"
+                }),
+                k.pos(140, k.height() - 200),
+                k.anchor("center"),
+                k.color(255, 255, 255),
+                k.z(2004),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            dialogText = k.add([
+                k.text("", {
+                    size: 20,
+                    font: "galmuri",
+                    width: k.width() - 180
+                }),
+                k.pos(90, k.height() - 170),
+                k.color(255, 255, 255),
+                k.z(2004),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            showCurrentDialog();
+        }
+        
+        function showCurrentDialog() {
+            hideHelpText();
+            
+            if (!isShiftTutorial && currentDialogIndex < dialogData.length) {
+                const dialog = dialogData[currentDialogIndex];
+                dialogText.text = dialog.text;
+                nameText.text = dialog.character;
+                
+                helpTextTimer = setTimeout(() => {
+                    showHelpText("스페이스 키를 누르세요");
+                }, 1000);
+                
+            } else if (isShiftTutorial && currentDialogIndex < shiftDialogData.length) {
+                const dialog = shiftDialogData[currentDialogIndex];
+                dialogText.text = dialog.text;
+                nameText.text = dialog.character;
+                
+                if (currentDialogIndex === 0) {
+                    helpTextTimer = setTimeout(() => {
+                        showHelpText("Shift 키를 누르면 빠르게 넘길 수 있습니다!");
+                    }, 100);
+                }
+            }
+        }
+        
+        function showHelpText(text) {
+            if (helpText) {
+                helpText.destroy();
+                helpText = null;
+            }
+            
+            helpText = k.add([
+                k.text(text, {
+                    size: 14,
+                    font: "galmuri"
+                }),
+                k.pos(k.center().x, k.height() - 240),
+                k.anchor("center"),
+                k.color(150, 150, 150),
+                k.opacity(0),
+                k.z(2005),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            helpTextVisible = true;
+            
+            const blinkTween = () => {
+                if (helpTextVisible && helpText) {
+                    k.tween(helpText.opacity, 1, 0.8, (val) => {
+                        if (helpText) helpText.opacity = val;
+                    }).then(() => {
+                        if (helpTextVisible && helpText) {
+                            k.tween(helpText.opacity, 0.3, 0.8, (val) => {
+                                if (helpText) helpText.opacity = val;
+                            }).then(() => {
+                                if (helpTextVisible) {
+                                    blinkTween();
+                                }
+                            });
+                        }
+                    });
+                }
+            };
+            blinkTween();
+        }
+        
+        function hideHelpText() {
+            helpTextVisible = false;
+            if (helpText) {
+                helpText.destroy();
+                helpText = null;
+            }
+            if (helpTextTimer) {
+                clearTimeout(helpTextTimer);
+                helpTextTimer = null;
+            }
+        }
+        
+        const dialogKeyHandler = (e) => {
+            if (!isDialogActive) return;
+            
+            if (e.type === 'keydown') {
+                if (e.code === 'Space' && !isShiftTutorial) {
+                    e.preventDefault();
+                    hideHelpText();
+                    
+                    currentDialogIndex++;
+                    if (currentDialogIndex >= dialogData.length) {
+                        isShiftTutorial = true;
+                        currentDialogIndex = 0;
+                        showCurrentDialog();
+                    } else {
+                        showCurrentDialog();
+                    }
+                } else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && isShiftTutorial) {
+                    e.preventDefault();
+                    hideHelpText();
+                    
+                    currentDialogIndex++;
+                    if (currentDialogIndex >= shiftDialogData.length) {
+                        endDialog();
+                    } else {
+                        showCurrentDialog();
+                    }
+                }
+            }
+        };
+        
+        function endDialog() {
+            console.log("🎭 대화 종료");
+            isDialogActive = false;
+            hideHelpText();
+            
+            document.removeEventListener('keydown', dialogKeyHandler);
+            document.removeEventListener('keyup', dialogKeyHandler);
+            
+            const allDialogElements = k.get("tutorialDialog");
+            allDialogElements.forEach(element => {
+                if (element.opacity !== undefined) {
+                    k.tween(element.opacity, 0, 1, (val) => {
+                        element.opacity = val;
+                    });
+                }
+            });
+            
+            k.wait(1, () => {
+                k.destroyAll("tutorialDialog");
+                showFinalWellDoneMessage();
+            });
+        }
+        
+        document.addEventListener('keydown', dialogKeyHandler);
+        document.addEventListener('keyup', dialogKeyHandler);
+        
+        createDialogBox();
+    }
+
+    function showFinalWellDoneMessage() {
+        tutorialStep = 8;
+        
+        const finalWellDone = k.add([
+            k.text("잘했습니다!", {
+                font: "galmuri",
+                size: 28,
+                align: "center"
+            }),
+            k.color(50, 200, 50),
+            k.pos(k.center().x, k.height() - 120),
+            k.anchor("center"),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        k.tween(finalWellDone.opacity, 1, 1, (val) => {
+            finalWellDone.opacity = val;
+        }).then(() => {
+            k.wait(2, () => {
+                k.tween(finalWellDone.opacity, 0, 1, (val) => {
+                    finalWellDone.opacity = val;
+                }).then(() => {
+                    finalWellDone.destroy();
+                    showTutorialCompleteMessage();
+                });
+            });
+        });
+    }
+
+    function showTutorialCompleteMessage() {
+        tutorialStep = 9;
+        
+        const completeText = k.add([
+            k.text("튜 토 리 얼 을  모 두  마 치 셨 습 니 다 .", { 
+                size: 26,
+                font: "galmuri"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.center().y),
+            k.color(111, 111, 111),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        k.tween(completeText.opacity, 1, 1, (val) => {
+            completeText.opacity = val;
+        }).then(() => {
+            k.wait(3, () => {
+                k.tween(completeText.opacity, 0, 1, (val) => {
+                    completeText.opacity = val;
+                }).then(() => {
+                    completeText.destroy();
+                    console.log("🎉 튜토리얼 완전히 종료!");
+                    // 필요시 다른 씬으로 이동
+                    // k.go("prologue");
+                });
+            });
+        });
+    }
+
+    // 키 입력 처리
+    documentKeyHandler = (e) => {
+        console.log(`🎮 Key event: ${e.code}, type: ${e.type}, tutorialStep: ${tutorialStep}`);
+        
+        if (tutorialStep !== 1 && tutorialStep !== 4 && tutorialStep !== 7) {
+            if (e.type === 'keyup') {
+                keyStates = {
+                    left: false,
+                    right: false,
+                    up: false,
+                    down: false
+                };
+            }
+            return;
+        }
+        
+        switch(e.code) {
+            case 'ArrowLeft':
+                keyStates.left = (e.type === 'keydown');
+                e.preventDefault();
+                console.log(`⬅️ Left key: ${keyStates.left}`);
+                break;
+            case 'ArrowRight':
+                keyStates.right = (e.type === 'keydown');
+                e.preventDefault();
+                console.log(`➡️ Right key: ${keyStates.right}`);
+                break;
+            case 'ArrowUp':
+                keyStates.up = (e.type === 'keydown');
+                e.preventDefault();
+                console.log(`⬆️ Up key: ${keyStates.up}`);
+                break;
+            case 'ArrowDown':
+                keyStates.down = (e.type === 'keydown');
+                e.preventDefault();
+                console.log(`⬇️ Down key: ${keyStates.down}`);
+                break;
+            case 'Space':
+                if (e.type === 'keydown' && (tutorialStep === 4 || tutorialStep === 7) && isNearNPC) {
+                    e.preventDefault();
+                    console.log(`🔍 스페이스바 이벤트! tutorialStep: ${tutorialStep}`);
+                    
+                    if (tutorialStep === 4) {
+                        handleLetterInteraction();
+                    } else if (tutorialStep === 7) {
+                        handleNPCInteraction();
+                    }
+                }
+                break;
+        }
+    };
+
+    document.addEventListener('keydown', documentKeyHandler);
+    document.addEventListener('keyup', documentKeyHandler);
+
+    // Kaboom 스페이스바 이벤트
+    k.onKeyPress("space", () => {
+        if ((tutorialStep === 4 || tutorialStep === 7) && isNearNPC) {
+            if (tutorialStep === 4) {
+                handleLetterInteraction();
+            } else if (tutorialStep === 7) {
+                handleNPCInteraction();
+            }
+        }
+    });
+
+    // 메인 업데이트 루프
+    k.onUpdate(() => {
+        if (!player || !npc || (tutorialStep !== 4 && tutorialStep !== 7 && tutorialStep !== 1)) return;
+        
+        // 이동 처리 (tutorialStep 1에서만)
+        if (tutorialStep === 1 && player) {
+            const deltaTime = k.dt() * 1000;
+            let isMoving = false;
+            const moveVector = k.vec2(0, 0);
+            
+            if (keyStates.left) {
+                moveVector.x -= MOVE_SPEED * k.dt();
+                updateDirectionTime('left', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.right) {
+                moveVector.x += MOVE_SPEED * k.dt();
+                updateDirectionTime('right', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.up) {
+                moveVector.y -= MOVE_SPEED * k.dt();
+                updateDirectionTime('up', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.down) {
+                moveVector.y += MOVE_SPEED * k.dt();
+                updateDirectionTime('down', deltaTime);
+                isMoving = true;
+            }
+            
+            // 이동 제한
+            const newPos = player.pos.add(moveVector);
+            const distanceFromCenter = newPos.dist(k.vec2(CENTER_X, CENTER_Y));
+            
+            if (distanceFromCenter <= MOVE_RADIUS) {
+                player.pos = newPos;
+                hasPlayerMoved = true;
+            }
+            
+            // 애니메이션 처리
+            if (isMoving) {
+                let direction = "down";
+                
+                if (keyStates.up) {
+                    direction = "up";
+                } else if (keyStates.down) {
+                    direction = "down";
+                } else if (keyStates.left) {
+                    direction = "left";
+                } else if (keyStates.right) {
+                    direction = "right";
+                }
+                
+                if (currentAnimDirection !== direction || !isCurrentlyMoving) {
+                    player.play(`player-walk-${direction}`);
+                    currentAnimDirection = direction;
+                    isCurrentlyMoving = true;
+                }
+            } else {
+                if (isCurrentlyMoving) {
+                    player.play(`player-idle-${currentAnimDirection}`);
+                    isCurrentlyMoving = false;
+                }
+            }
+        }
+        
+        // 상호작용 감지
+        if ((tutorialStep === 4 || tutorialStep === 7) && player && npc) {
+            const distance = player.pos.dist(npc.pos);
+            
+            if (distance <= 100) {
+                if (!isNearNPC) {
+                    isNearNPC = true;
+                    console.log("💬 NPC에 가까워짐");
+                    
+                    if (exclamationMark) {
+                        exclamationMark.destroy();
+                    }
+                    exclamationMark = k.add([
+                        k.sprite("main-assets", { frame: 5777 }),
+                        k.pos(npc.pos.x, npc.pos.y - 60),
+                        k.anchor("center"),
+                        k.scale(2),
+                        k.z(1000),
+                        "interaction-indicator"
+                    ]);
+                    
+                    // 하트 애니메이션
+                    const originalY = exclamationMark.pos.y;
+                    const floatTween = () => {
+                        if (exclamationMark) {
+                            k.tween(exclamationMark.pos.y, originalY - 10, 1, (val) => {
+                                if (exclamationMark) exclamationMark.pos.y = val;
+                            }).then(() => {
+                                if (exclamationMark) {
+                                    k.tween(exclamationMark.pos.y, originalY, 1, (val) => {
+                                        if (exclamationMark) exclamationMark.pos.y = val;
+                                    }).then(() => {
+                                        if (exclamationMark) {
+                                            floatTween();
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    };
+                    floatTween();
+                }
+            } else {
+                if (isNearNPC) {
+                    isNearNPC = false;
+                    console.log("🚶 NPC에서 멀어짐");
+                    
+                    if (exclamationMark) {
+                        exclamationMark.destroy();
+                        exclamationMark = null;
+                    }
+                }
+            }
+        }
+    });
+
+    // 씬 정리
+    k.onSceneLeave(() => {
+        document.body.style.backgroundColor = '';
+        
+        if (documentKeyHandler) {
+            document.removeEventListener('keydown', documentKeyHandler);
+            document.removeEventListener('keyup', documentKeyHandler);
+        }
+        
+        k.destroyAll("tutorialDialog");
+        
+        const fadeOverlays = document.querySelectorAll('div[style*="position: fixed"][style*="z-index: 10000"]');
+        fadeOverlays.forEach(overlay => {
+            if (overlay.parentNode) {
+                document.body.removeChild(overlay);
+            }
+        });
+        console.log("✅ Tutorial 씬 종료");
+    });
+}

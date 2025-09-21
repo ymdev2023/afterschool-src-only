@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ko">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AFTERSCHOOL!!!</title>
+        <!-- 추가된 부분: 파비콘 -->
+        <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    </head>
+    <body>
+        <script type="module" src="src/main.js"></script>
+    </body>
+</html>
+
+<style>
+    body {
+        margin: 0;
+        background-color: black;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden; /* 스크롤바 숨김 */
+    }
+    canvas {
+        image-rendering: pixelated;
+        width: 1600px;
+        height: 900px;
+        z-index: 1;
+        position: relative;
+    }
+    
+</style>

@@ -1,0 +1,23 @@
+const noteDialogues = {
+    korean: {
+        "note-1": [
+            "학교에 위험이 도사리고 있어. 지체할 시간이 없어... 학교 안으로 들어가봐!",
+        ],
+        "note-2": [
+            "그 소문 들었어? 12시가 되면 미술실에서 무슨 소리가 들린다나봐... 근데 누가 그 시간까지 학교에 있겠어?",
+        ],
+    },
+    english: {
+        "note-1": [
+            "There is danger lurking in the school. We don't have time to waste... ",
+            "Go inside the school!",
+        ],
+        "note-2": [
+            "Have you heard the rumor?",
+            "At midnight, there's a sound coming from the art room... ",
+            "But who would be in school at that time?",
+        ],
+    },
+};
+
+export default noteDialogues;

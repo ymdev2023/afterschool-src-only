@@ -1,0 +1,334 @@
+import { healthBar } from "../../uiComponents/healthbar.js";
+import {
+    generatePlayerComponents,
+    setPlayerControls,
+    watchPlayerHealth,
+} from "../../entities/player.js";
+import { generateNoteComponents } from "../../entities/note.js";
+import { gameState } from "../../state/stateManagers.js";
+import { fadeInBGM } from "../../utils.js";
+
+import {
+    colorizeBackground,
+    fetchMapData,
+    drawBoundaries,
+    onAttacked,
+    onCollideWithPlayer,
+} from "../../utils.js";
+
+import noteDialogues from "../content/noteDialogue.js";
+import objectDialogues from "../../content/objectDialogue.js";
+import { dialog } from "../../uiComponents/dialog.js";
+import { toggleLocale, toggleMute } from "../../utils.js";
+
+export default async function world(k) {
+    fadeInBGM(k, "rpg-front-bgm"); // 수정된 부분: world-bgm → rpg-front-bgm
+
+    const previousScene = gameState.getPreviousScene();
+
+    // 언어를 한국어로 설정
+    gameState.setLocale("korean");
+
+    colorizeBackground(k, 238, 246, 169);
+    const mapData = await fetchMapData("./assets/images/temp/testasset.json"); // 수정된 부분: images 폴더로 이동
+    const map = k.add([k.pos(0, 0)]);
+
+    const entities = {
+        player: null,
+        students: [],
+        letters: [],
+    };
+    const layers = mapData.layers;
+    for (const layer of layers) {
+        if (layer.name === "boundaries") {
+            // boundaries 레이어에서 특별한 오브젝트들 처리
+            for (const object of layer.objects) {
+                if (["guryeong", "front_gate"].includes(object.name)) {
+                    const objectType = object.name;
+
+                    // Tiled 좌표계에 맞춰 위치 조정 (다른 충돌 박스들과 일관성 유지)
+                    const objectEntity = map.add([
+                        k.rect(object.width, object.height),
+                        k.area(),
+                        k.body({ isStatic: true }),
+                        k.pos(object.x, object.y + 16), // 일반 충돌 박스와 같은 오프셋 적용
+                        k.opacity(0),
+                        objectType,
+                        "interactive-object",
+                        { objectType },
+                    ]);
+
+                    // 플레이어와의 충돌 감지
+                    objectEntity.onCollide("player", async (player) => {
+                        console.log(`🎯 ${objectType} 충돌 감지!`);
+                        k.play("bubble-sfx");
+
+                        const locale = gameState.getLocale();
+                        const content = objectDialogues[locale]?.[
+                            objectType
+                        ] || [
+                            `This is ${objectType}`,
+                            `이것은 ${objectType}입니다`,
+                        ];
+                        const font =
+                            locale === "korean" ? "galmuri" : "gameboy";
+
+                        // 오브젝트 이름을 objectDialogue에서 가져오기
+                        const speakerName =
+                            objectDialogues.names[locale]?.[objectType] ||
+                            objectType;
+
+                        await dialog(k, k.vec2(250, 500), content, {
+                            font,
+                            speakerName,
+                            speakerImage: null,
+                        });
+                    });
+
+                    // 플레이어가 영역에 들어올 때도 감지
+                    objectEntity.onCollideUpdate("player", (player) => {
+                        // 연속적인 충돌 감지 - 필요시 사용
+                    });
+                }
+            }
+
+            drawBoundaries(k, map, layer);
+            continue;
+        }
+
+        if (layer.name === "spawnpoint") {
+            for (const object of layer.objects) {
+                if (
+                    object.name === "player-dungeon" &&
+                    previousScene === "dungeon"
+                ) {
+                    entities.player = map.add(
+                        generatePlayerComponents(k, k.vec2(object.x, object.y))
+                    );
+                    continue;
+                }
+
+                if (
+                    object.name === "player" &&
+                    (!previousScene || previousScene === "house")
+                ) {
+                    entities.player = map.add(
+                        generatePlayerComponents(k, k.vec2(object.x, object.y))
+                    );
+                    continue;
+                }
+
+                if (object.name.startsWith("student")) {
+                    // student1, student2, student3, student4 처리
+                    const studentType = object.name; // student1, student2, etc.
+
+                    const student = map.add([
+                        k.sprite("test-assets", {
+                            anim: studentType, // main.js에 정의된 애니메이션 사용
+                        }),
+                        k.area(),
+                        k.body({ isStatic: true }),
+                        k.pos(object.x, object.y),
+                        k.z(1), // 플레이어보다 아래, 배경보다 위에 배치
+                        "student",
+                        { studentType },
+                    ]);
+
+                    entities.students.push(student);
+
+                    student.onCollide("player", async (player) => {
+                        k.play("bubble-sfx");
+
+                        const locale = gameState.getLocale();
+                        const content = npcDialogues[locale]?.[studentType] || [
+                            `Hello! I'm ${studentType}!`,
+                            `안녕하세요! 저는 ${studentType}입니다!`,
+                        ];
+                        const font =
+                            locale === "korean" ? "galmuri" : "gameboy";
+
+                        // 학생 이름을 npcDialogue에서 가져오기
+                        const speakerName =
+                            npcDialogues.names[locale]?.[studentType] ||
+                            studentType;
+
+                        await dialog(k, k.vec2(250, 500), content, {
+                            font,
+                            speakerName,
+                            speakerImage: null,
+                        });
+                    });
+                    continue;
+                }
+
+                if (object.name.startsWith("letter")) {
+                    // letter1, letter2 처리
+                    const letterType = object.name;
+                    const letterId =
+                        object.properties?.find((p) => p.name === "letterId")
+                            ?.value || letterType;
+
+                    const letter = map.add([
+                        k.sprite("test-assets", {
+                            anim: letterType, // main.js에 정의된 애니메이션 사용
+                        }),
+                        k.area(),
+                        k.body({ isStatic: true }),
+                        k.pos(object.x, object.y),
+                        k.z(1), // 플레이어보다 아래, 배경보다 위에 배치
+                        "letter",
+                        { letterId, letterType },
+                    ]);
+
+                    entities.letters.push(letter);
+
+                    letter.onCollide("player", async (player) => {
+                        k.play("bubble-sfx");
+
+                        const locale = gameState.getLocale();
+                        // objectDialogues 사용
+                        const content = objectDialogues[locale]?.[
+                            letterType
+                        ] || [
+                            `This is ${letterType}`,
+                            `이것은 ${letterType}입니다`,
+                        ];
+                        const font =
+                            locale === "korean" ? "galmuri" : "gameboy";
+
+                        // 편지 이름을 objectDialogue에서 가져오기
+                        const speakerName =
+                            objectDialogues.names[locale]?.[letterType] ||
+                            letterType;
+
+                        await dialog(k, k.vec2(250, 500), content, {
+                            font,
+                            speakerName,
+                            speakerImage: null,
+                        });
+                    });
+                    continue;
+                }
+
+                // 기존 note 처리는 유지 (호환성을 위해)
+                if (object.name === "note") {
+                    const noteIdProp = object.properties?.find(
+                        (p) => p.name === "noteId"
+                    )?.value;
+
+                    const note = map.add(
+                        generateNoteComponents(
+                            k,
+                            k.vec2(object.x, object.y),
+                            noteIdProp
+                        )
+                    );
+
+                    note.onCollide("player", async (player) => {
+                        k.play("bubble-sfx");
+
+                        const locale = gameState.getLocale();
+                        const content = noteDialogues[locale][note.noteId];
+                        const font =
+                            locale === "korean" ? "galmuri" : "gameboy";
+
+                        await dialog(k, k.vec2(250, 500), content, { font });
+                    });
+                }
+            }
+            continue;
+        }
+
+        // Handle regular tile layers with test-assets sprite
+        if (layer.data) {
+            let nbOfDrawnTiles = 0;
+            const tilePos = k.vec2(0, 0);
+            for (const tile of layer.data) {
+                if (nbOfDrawnTiles % layer.width === 0) {
+                    tilePos.x = 0;
+                    tilePos.y += mapData.tileheight;
+                } else {
+                    tilePos.x += mapData.tilewidth;
+                }
+
+                nbOfDrawnTiles++;
+
+                if (tile === 0) continue;
+
+                // upmost 레이어는 캐릭터보다 위에 배치 (z=3), 다른 타일은 기본 (z=0)
+                const zIndex = layer.name === "upmost" ? 3 : 0;
+
+                // Use test-assets sprite instead of assets
+                map.add([
+                    k.sprite("test-assets", { frame: tile - 1 }),
+                    k.pos(tilePos),
+                    k.z(zIndex),
+                    k.offscreen(),
+                ]);
+            }
+            continue;
+        }
+    }
+
+    setPlayerControls(k, entities.player);
+    entities.player.onCollide("door-entrance", () => k.go("house"));
+    entities.player.onCollide("dungeon-door-entrance", () => k.go("dungeon"));
+
+    k.camScale(3);
+    k.camPos(entities.player.worldPos());
+    k.onUpdate(async () => {
+        if (entities.player.pos.dist(k.camPos()) > 3) {
+            await k.tween(
+                k.camPos(),
+                entities.player.worldPos(),
+                0.15,
+                (newPos) => k.camPos(newPos),
+                k.easings.linear
+            );
+        }
+    });
+
+    // Student나 letter는 정적이므로 별도 AI 처리 불필요
+    // 필요시 여기에 student들의 애니메이션이나 상호작용 로직 추가 가능
+
+    healthBar(k);
+    watchPlayerHealth(k);
+
+    let isLocaleLocked = { value: false };
+    let isMuteLocked = { value: false };
+
+    // 키보드 단축키
+    k.onKeyPress("l", () => {
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onKeyPress("m", () => {
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    // 게임패드 컨트롤 (L/R 숄더 버튼)
+    k.onGamepadButtonPress("lshoulder", () => {
+        // L버튼
+        console.log("🎮 L버튼 눌림 - 언어 변경");
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onGamepadButtonPress("rshoulder", () => {
+        // R버튼
+        console.log("🎮 R버튼 눌림 - 음소거 토글");
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    // 게임패드 트리거 버튼도 추가 (선택사항)
+    k.onGamepadButtonPress("ltrigger", () => {
+        // L2 트리거
+        console.log("🎮 L2 트리거 눌림 - 언어 변경");
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onGamepadButtonPress("rtrigger", () => {
+        // R2 트리거
+        console.log("🎮 R2 트리거 눌림 - 음소거 토글");
+        toggleMute(k, gameState, isMuteLocked);
+    });
+}

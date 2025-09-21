@@ -1,0 +1,56 @@
+const english = [
+    [
+        "It's dangerous to go alone!",
+        "There are many dangers outside the school.",
+        "Take this stun gun for self-defense, press space to use it.",
+        "Explore the school and find notes left by your friends!",
+        "There are dangers lurking in this school.",
+    ],
+    [
+        "Did you forget how to use your stun gun?",
+        "Press space to attack.",
+        "Please reveal the secret of this school before it's too late!",
+    ],
+    ["Please reveal the secret of this school!"],
+    ["Did you take the stun gun for self-defense?"],
+];
+
+const korean = [
+    [
+        "혼자 돌아다니는 건 위험하단다! 학교 밖엔 다양한 위험이 도사리고 있어. ",
+        "이 호신용 전기충격기를 가져가. 스페이스 키를 눌러 사용하면 된단다.",
+        "학교 곳곳을 돌아다니며 친구들이 남긴 쪽지를 발견해보렴!",
+        "이 학교엔 위험이 도사리고 있단다.",
+    ],
+    [
+        "전기충격기를 사용하는 법을 잊었니?",
+        "스페이스 키를 눌러 공격하면 된단다.",
+        "학교의 비밀을 밝혀내다오! 너무 늦기 전에 말이야...",
+    ],
+    ["학교의 비밀을 밝혀내다오!"],
+    ["호신용 전기충격기는 챙겼니?"],
+];
+
+const french = [
+    [
+        "C'est dangereux de s'aventurer seul!",
+        "Prends cette epee, presses la touche espace pour l'utiliser.",
+        "S'il te plait, sauves mon fils! Il est capture au donjon situe a l'ouest.",
+        "Je te recompenserais genereusement!",
+    ],
+    [
+        "Tu as oublie comment utiliser ton epee?",
+        "Presses la touche espace pour attaquer.",
+        "S'il te plait, sauves mon fils avant que ça soit trop tard!",
+    ],
+    ["S'il te plait, sauves mon fils!"],
+    ["Comme recompense pour avoir sauve mon fils...", "Tu peux garder l'epee."],
+];
+
+const oldmanLines = {
+    english,
+    french,
+    korean,
+};
+
+export default oldmanLines;

@@ -1,0 +1,1465 @@
+import { gameState } from "../../state/stateManagers.js";
+import { colorizeBackground, audioManager } from "../../utils.js";
+
+export default function tutorial(k) {
+    console.log("🎓 Tutorial 씬 시작");
+    
+    // 기존 BGM 정지 및 새 BGM 재생
+    audioManager.stopBGM();
+    audioManager.playBGM("rpg-main-bgm");
+    
+    // 검은색 배경
+    colorizeBackground(k, 0, 0, 0);
+    
+    // 문서 배경도 검은색으로 설정
+    document.body.style.backgroundColor = 'black';
+    
+    // JavaScript로 페이드 인 효과
+    const fadeInOverlay = document.createElement('div');
+    fadeInOverlay.style.position = 'fixed';
+    fadeInOverlay.style.top = '0';
+    fadeInOverlay.style.left = '0';
+    fadeInOverlay.style.width = '100vw';
+    fadeInOverlay.style.height = '100vh';
+    fadeInOverlay.style.backgroundColor = 'black';
+    fadeInOverlay.style.opacity = '1';
+    fadeInOverlay.style.zIndex = '10000';
+    fadeInOverlay.style.pointerEvents = 'none';
+    fadeInOverlay.style.transition = 'opacity 2s ease-out';
+    document.body.appendChild(fadeInOverlay);
+    
+    console.log("🌅 Tutorial 페이드 인 시작");
+    
+    // 페이드 인 시작
+    setTimeout(() => {
+        fadeInOverlay.style.opacity = '0';
+        console.log("🌅 Tutorial 페이드 진행: 시작");
+    }, 50);
+    
+    // 페이드 인 완료 후 오버레이 제거
+    setTimeout(() => {
+        console.log("✨ Tutorial Fade In 완료");
+        if (fadeInOverlay && fadeInOverlay.parentNode) {
+            document.body.removeChild(fadeInOverlay);
+        }
+    }, 2100); // 2초 + 여유 시간
+
+    // 패턴 배경 추가 (1280x1280 원본 이미지 사용) - pattern_lightgreen.png
+    const patterns = [];
+    const patternSize = 1280; // 원본 이미지 크기
+    
+    console.log("화면 크기:", k.width(), "x", k.height());
+    
+    // 원본 크기 패턴으로 타일링
+    const screenWidth = k.width();
+    const screenHeight = k.height();
+    const extraPadding = patternSize; // 여분 패딩
+    
+    console.log("실제 렌더링 영역:", screenWidth, "x", screenHeight);
+    
+    // 원본 크기로 패턴 배치 (스케일링 및 색상 필터링 없음)
+    for (let x = -extraPadding; x <= screenWidth + extraPadding; x += patternSize) {
+        for (let y = -extraPadding; y <= screenHeight + extraPadding; y += patternSize) {
+            const pattern = k.add([
+                k.sprite("pattern_lightgreen"),
+                k.pos(x, y),
+                k.z(0), // z-index 0
+                k.fixed(), // 카메라 움직임에 고정
+            ]);
+            patterns.push(pattern);
+        }
+    }
+    
+    console.log("패턴 생성 완료, 총 패턴 수:", patterns.length);
+
+    // 패턴 애니메이션 (좌하향으로 흐름) - 자연스러운 래핑
+    const patternSpeed = 30; // 속도 조정
+    k.onUpdate(() => {
+        patterns.forEach(pattern => {
+            pattern.pos.x -= patternSpeed * k.dt(); // 왼쪽으로 이동
+            pattern.pos.y += patternSpeed * k.dt(); // 아래로 이동
+            
+            // 자연스러운 래핑 - 패턴이 화면 밖으로 나가면 반대편에서 다시 등장
+            if (pattern.pos.x <= -patternSize) {
+                pattern.pos.x += patternSize * Math.ceil((screenWidth + extraPadding * 2) / patternSize);
+            }
+            if (pattern.pos.y >= screenHeight + patternSize) {
+                pattern.pos.y -= patternSize * Math.ceil((screenHeight + extraPadding * 2) / patternSize);
+            }
+        });
+    });
+
+    // 상단 가운데에 TUTORIAL 텍스트 (gameboy 폰트) - 20% 작게
+    const titleText = k.add([
+        k.text("TUTORIAL", { 
+            size: 38, // 48에서 38로 줄임 (20% 감소)
+            font: "gameboy"
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, 120), // 80에서 120으로 증가 (패딩 늘림)
+     k.color(105, 215, 23), // 녹색
+        k.z(10),
+        k.fixed(), // 카메라 움직임에 고정
+    ]);
+
+    // 가운데 텍스트 (galmuri 폰트) - fade in/out 효과
+    const centerText = k.add([
+        k.text("튜 토 리 얼 을  시 작 합 니 다 .", { 
+            size: 26, // 22에서 26으로 증가
+            font: "galmuri"
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y),
+        k.color(111, 111, 111), // 살짝 옅은 검은색
+        k.opacity(0),
+        k.z(10),
+        k.fixed(), // 카메라 움직임에 고정
+    ]);
+
+    // 플레이어 캐릭터 변수
+    let player = null;
+    
+    // NPC 캐릭터 변수
+    let npc = null;
+    
+    // 상호작용 관련 변수
+    let isNearNPC = false;
+    let exclamationMark = null; // 실제로는 하트 표시
+    
+    // 튜토리얼 텍스트
+    let tutorialText = null;
+
+    // 상태 관리 변수
+    let tutorialStep = 0; // 0: 초기 텍스트, 1: 캐릭터 이동 튜토리얼, 2: 잘했습니다, 3: NPC 등장, 4: 대화 튜토리얼
+    let hasPlayerMoved = false; // 플레이어가 한 번이라도 움직였는지
+    
+    // 이동 방향 추적 변수
+    let movementTracking = {
+        left: false,
+        right: false,
+        up: false,
+        down: false,
+        startTime: null,
+        indicators: {},
+        // 각 방향별 누른 시간 추적
+        directionTimes: {
+            left: 0,
+            right: 0,
+            up: 0,
+            down: 0
+        },
+        requiredTime: 500 // 0.5초
+    };
+
+    // 1단계: 초기 텍스트 fade in/out
+    k.wait(2.5, () => { // 페이드 인 완료 후 시작
+        console.log("🎓 튜토리얼 초기 텍스트 fade in 시작");
+        
+        // Fade in
+        k.tween(centerText.opacity, 1, 1, (val) => {
+            centerText.opacity = val;
+        }).then(() => {
+            console.log("🎓 초기 텍스트 표시 완료, 3초 대기");
+            
+            // 1초 대기 후 fade out (3초에서 1초로 단축)
+            k.wait(1, () => {
+                k.tween(centerText.opacity, 0, 1, (val) => {
+                    centerText.opacity = val;
+                }).then(() => {
+                    console.log("🎓 초기 텍스트 fade out 완료, 캐릭터 생성");
+                    // 텍스트 fade out 완료 후 캐릭터 등장
+                    k.wait(0.5, () => {
+                        startCharacterTutorial();
+                    });
+                });
+            });
+        });
+    });
+
+    function startCharacterTutorial() {
+        tutorialStep = 1;
+        
+        // 가운데 텍스트 숨기기
+        centerText.opacity = 0;
+        
+        // 플레이어 캐릭터 생성 (화면 정가운데) - 3.6배 크기 (10% 감소)
+        player = k.add([
+            k.sprite("main-assets", { anim: "player-idle-down" }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.center().y), // 화면 정가운데
+            k.scale(0.1), // 매우 작게 시작 (ease-in 효과용)
+            k.area({ width: 86, height: 86 }), // 콜라이더 영역 (24*3.6 = 86.4)
+            k.body(), // 콜라이더 추가
+            k.opacity(0), // 처음에는 투명
+            k.z(20),
+            "player"
+        ]);
+        
+        // 튜토리얼 텍스트 생성 (하단에 대칭 배치) - 크기 줄임
+        tutorialText = k.add([
+            k.text("화살표 키를 눌러 상하좌우로 움직여보세요.", { 
+                size: 20, // 모든 안내 텍스트와 동일하게
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120), // 80에서 120으로 증가 (패딩 늘림)
+            k.color(50, 200, 50), // "잘했습니다" 색상으로 변경 (녹색)
+            k.opacity(0), // 처음에는 투명
+            k.z(10),
+            k.fixed(), // 카메라 움직임에 고정
+        ]);
+        
+        // 방향 인디케이터 생성
+        createMovementIndicators();
+        
+        console.log("🎓 플레이어 캐릭터 생성 완료:", player.pos);
+        
+        // 플레이어 ease-in 효과 (크기와 투명도 동시에)
+        k.tween(player.scale, k.vec2(3.6, 3.6), 1.2, (val) => {
+            player.scale = val;
+        }, k.easings.easeOutBack); // 살짝 튀는 효과
+        
+        k.tween(player.opacity, 1, 1.2, (val) => {
+            player.opacity = val;
+        });
+        
+        // 텍스트는 플레이어가 등장한 후에 표시
+        k.wait(0.8, () => {
+            k.tween(tutorialText.opacity, 1, 0.8, (val) => {
+                tutorialText.opacity = val;
+            });
+            
+            // 인디케이터도 함께 표시
+            k.wait(0.2, () => {
+                showMovementIndicators();
+                // 이동 추적 시작
+                movementTracking.startTime = Date.now();
+            });
+        });
+        
+        console.log("🎓 캐릭터 이동 튜토리얼 시작");
+    }
+
+    // 방향 인디케이터 생성 함수
+    function createMovementIndicators() {
+        const baseY = k.height() - 160; // 텍스트 위쪽에 배치
+        const centerX = k.center().x;
+        const spacing = 60; // 인디케이터 간격
+        
+        const directions = [
+            { key: 'left', pos: { x: centerX - spacing * 1.5, y: baseY }, symbol: '←' },
+            { key: 'right', pos: { x: centerX - spacing * 0.5, y: baseY }, symbol: '→' },
+            { key: 'up', pos: { x: centerX + spacing * 0.5, y: baseY }, symbol: '↑' },
+            { key: 'down', pos: { x: centerX + spacing * 1.5, y: baseY }, symbol: '↓' }
+        ];
+        
+        directions.forEach(dir => {
+            // 배경 원 (회색)
+            const bgCircle = k.add([
+                k.circle(16),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(60, 60, 60), // 어두운 회색
+                k.opacity(0),
+                k.z(15),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            // 완료 원 (녹색)
+            const completeCircle = k.add([
+                k.circle(16),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(50, 200, 50), // 녹색
+                k.opacity(0),
+                k.z(16),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            // 방향 기호 텍스트
+            const dirText = k.add([
+                k.text(dir.symbol, {
+                    size: 20,
+                    font: "galmuri"
+                }),
+                k.pos(dir.pos.x, dir.pos.y),
+                k.anchor("center"),
+                k.color(255, 255, 255), // 흰색
+                k.opacity(0),
+                k.z(17),
+                k.fixed(),
+                "movementIndicator"
+            ]);
+            
+            movementTracking.indicators[dir.key] = {
+                background: bgCircle,
+                complete: completeCircle,
+                text: dirText,
+                completed: false
+            };
+        });
+    }
+    
+    // 인디케이터 표시 함수
+    function showMovementIndicators() {
+        Object.values(movementTracking.indicators).forEach(indicator => {
+            k.tween(indicator.background.opacity, 0.7, 0.5, (val) => {
+                indicator.background.opacity = val;
+            });
+            k.tween(indicator.text.opacity, 1, 0.5, (val) => {
+                indicator.text.opacity = val;
+            });
+        });
+    }
+    
+    // 방향 완료 표시 함수
+    function markDirectionComplete(direction) {
+        if (movementTracking.indicators[direction] && !movementTracking.indicators[direction].completed) {
+            movementTracking.indicators[direction].completed = true;
+            movementTracking[direction] = true;
+            
+            const indicator = movementTracking.indicators[direction];
+            
+            // 녹색 원 페이드 인 (0.5초 동안)
+            k.tween(indicator.complete.opacity, 0.9, 0.5, (val) => {
+                indicator.complete.opacity = val;
+            });
+            
+            // 텍스트 색상을 검은색으로 페이드 (0.5초 동안)
+            k.tween(indicator.text.color.r, 0, 0.5, (val) => {
+                indicator.text.color = k.rgb(val, val, val);
+            });
+            
+            console.log(`✅ 방향 완료: ${direction} (0.5초 이상 유지)`);
+            
+            // 모든 방향이 완료되었는지 확인
+            checkMovementCompletion();
+        }
+    }
+    
+    // 각 방향별 누른 시간 업데이트
+    function updateDirectionTime(direction, deltaTime) {
+        if (!movementTracking.indicators[direction].completed) {
+            movementTracking.directionTimes[direction] += deltaTime;
+            
+            // 0.5초 이상 누르면 완료로 표시
+            if (movementTracking.directionTimes[direction] >= movementTracking.requiredTime) {
+                markDirectionComplete(direction);
+            }
+        }
+    }
+    
+    // 이동 완료 확인 함수
+    function checkMovementCompletion() {
+        const allDirectionsComplete = movementTracking.left && 
+                                    movementTracking.right && 
+                                    movementTracking.up && 
+                                    movementTracking.down;
+        
+        // 시간 조건 제거 - 모든 방향만 완료하면 됨
+        if (allDirectionsComplete) {
+            console.log("🎉 모든 방향 이동 완료! 다음 단계로 진행");
+            
+            // 인디케이터 제거
+            k.destroyAll("movementIndicator");
+            
+            // 0.3초 후 다음 단계로 진행
+            k.wait(0.3, () => {
+                showWellDoneMessage();
+            });
+        }
+    }
+
+    // "잘했습니다!" 메시지 표시
+    function showWellDoneMessage() {
+        tutorialStep = 2;
+        
+        // 인디케이터 정리 (혹시 남아있다면)
+        k.destroyAll("movementIndicator");
+        
+        // 플레이어를 초기 상태로 완전히 복원
+        if (player) {
+            player.play("player-idle-down");
+            currentAnimDirection = "down";
+            isCurrentlyMoving = false;
+            
+            // 키 상태도 모두 초기화
+            keyStates = {
+                left: false,
+                right: false,
+                up: false,
+                down: false
+            };
+            
+            // 이동 추적 상태도 완전히 초기화
+            movementTracking = {
+                left: false,
+                right: false,
+                up: false,
+                down: false,
+                startTime: null,
+                indicators: {},
+                directionTimes: {
+                    left: 0,
+                    right: 0,
+                    up: 0,
+                    down: 0
+                },
+                requiredTime: 500
+            };
+            
+            console.log("🎭 플레이어 및 모든 상태 초기화 완료");
+        }
+        
+        // 기존 텍스트 페이드 아웃
+        k.tween(tutorialText.opacity, 0, 1, (val) => {
+            tutorialText.opacity = val;
+        }).then(() => {
+            // "잘했습니다!" 텍스트 생성
+            const wellDoneText = k.add([
+                k.text("잘했습니다!", { 
+                    size: 28, // 모든 "잘했습니다" 텍스트와 동일하게
+                    font: "galmuri",
+                    align: "center"
+                }),
+                k.anchor("center"),
+                k.pos(k.center().x, k.height() - 120),
+                k.color(50, 200, 50), // 녹색으로 표시
+                k.opacity(0),
+                k.z(10),
+                k.fixed(),
+            ]);
+            
+            // 페이드 인
+            k.tween(wellDoneText.opacity, 1, 1, (val) => {
+                wellDoneText.opacity = val;
+            }).then(() => {
+                // 2초 대기 후 페이드 아웃
+                k.wait(2, () => {
+                    k.tween(wellDoneText.opacity, 0, 1, (val) => {
+                        wellDoneText.opacity = val;
+                    }).then(() => {
+                        wellDoneText.destroy();
+                        showNPCAndDialogueTutorial();
+                    });
+                });
+            });
+        });
+    }
+
+    // NPC 등장 및 대화 튜토리얼
+    function showNPCAndDialogueTutorial() {
+        tutorialStep = 3;
+        
+        // letter1 오브젝트 생성 (플레이어 왼쪽에 간격을 두고)
+        npc = k.add([
+            k.sprite("main-assets", { frame: 5378 }), // letter1 프레임 사용
+            k.anchor("center"),
+            k.pos(player.pos.x - 120, player.pos.y), // 플레이어 왼쪽에 120px 간격 (180에서 120으로 줄임)
+            k.scale(3.6), // 플레이어와 같은 크기
+            k.area({ width: 25, height: 25 }), // 콜라이더를 스프라이트 크기에 맞게 조정 (작은 사물용)
+            k.body({ isStatic: true }), // 정적 콜라이더 (움직이지 않음)
+            k.opacity(0), // 처음에는 투명
+            k.z(20),
+            "npc",
+            "letter" // 태그 추가
+        ]);
+        
+        // Letter 페이드 인
+        k.tween(npc.opacity, 1, 1, (val) => {
+            npc.opacity = val;
+        }).then(() => {
+            // 편지 튜토리얼 텍스트 표시
+            showDialogueTutorialText();
+        });
+    }
+
+    // 대화 튜토리얼 텍스트 표시
+    function showDialogueTutorialText() {
+        tutorialStep = 4;
+        
+        const dialogueText = k.add([
+            k.text("쪽지와 같은 사물도 똑같이 스페이스를 눌러 상호작용 할 수 있습니다!", { 
+                size: 20, // 모든 안내 텍스트와 동일하게
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120),
+            k.color(50, 200, 50), // "잘했습니다" 색상으로 변경 (녹색)
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        // 페이드 인
+        k.tween(dialogueText.opacity, 1, 1, (val) => {
+            dialogueText.opacity = val;
+        });
+    }
+
+    // 플레이어 이동 처리
+    const MOVE_SPEED = 120; // 속도 조정 (픽셀/초)
+    const CENTER_X = k.center().x;
+    const CENTER_Y = k.center().y; // 플레이어 초기 Y 위치 (정가운데)
+    const MOVE_RADIUS = 100; // 이동 가능 반경
+    
+    // 애니메이션 상태 추적
+    let currentAnimDirection = "down"; // 현재 애니메이션 방향
+    let isCurrentlyMoving = false; // 현재 이동 중인지
+
+    // 한글 입력 상태에서도 화살표 키가 작동하도록 브라우저 이벤트 리스너 추가
+    let documentKeyHandler = null;
+    let keyStates = {
+        left: false,
+        right: false,
+        up: false,
+        down: false
+    };
+
+    documentKeyHandler = (e) => {
+        if (tutorialStep !== 1 && tutorialStep !== 4 && tutorialStep !== 7 && tutorialStep !== 9) {
+            // 허용되지 않는 tutorialStep에서는 키 상태 초기화
+            if (e.type === 'keyup') {
+                keyStates = {
+                    left: false,
+                    right: false,
+                    up: false,
+                    down: false
+                };
+            }
+            return; // M키 튜토리얼도 허용
+        }
+        
+        // 화살표 키만 처리
+        switch(e.code) {
+            case 'ArrowLeft':
+                keyStates.left = (e.type === 'keydown');
+                e.preventDefault();
+                break;
+            case 'ArrowRight':
+                keyStates.right = (e.type === 'keydown');
+                e.preventDefault();
+                break;
+            case 'ArrowUp':
+                keyStates.up = (e.type === 'keydown');
+                e.preventDefault();
+                break;
+            case 'ArrowDown':
+                keyStates.down = (e.type === 'keydown');
+                e.preventDefault();
+                break;
+            case 'Space':
+                if (e.type === 'keydown' && (tutorialStep === 4 || tutorialStep === 7) && isNearNPC) {
+                    e.preventDefault(); // 기본 스크롤 동작 방지
+                    console.log(`🔍 브라우저 스페이스바 이벤트! tutorialStep: ${tutorialStep}, isNearNPC: ${isNearNPC}`);
+                    
+                    if (tutorialStep === 4) {
+                        console.log("🎉 Letter와 성공적으로 상호작용! (브라우저 이벤트)");
+                        handleLetterInteraction();
+                    } else if (tutorialStep === 7) {
+                        console.log("🎉 NPC와 성공적으로 상호작용! (브라우저 이벤트)");
+                        handleNPCInteraction();
+                    }
+                } else if (e.type === 'keydown') {
+                    console.log(`❌ 브라우저 스페이스바 조건 불만족: tutorialStep=${tutorialStep}, isNearNPC=${isNearNPC}`);
+                }
+                break;
+            case 'KeyM':
+                if (e.type === 'keydown' && tutorialStep === 9) {
+                    e.preventDefault();
+                    console.log("🎵 M키로 음악 토글! (브라우저 이벤트)");
+                    handleMusicToggle();
+                }
+                break;
+        }
+    };
+
+    document.addEventListener('keydown', documentKeyHandler);
+    document.addEventListener('keyup', documentKeyHandler);
+
+    // 스페이스바 상호작용 이벤트 (Kaboom)
+    k.onKeyPress("space", () => {
+        console.log(`🔍 스페이스바 눌림! tutorialStep: ${tutorialStep}, isNearNPC: ${isNearNPC}`);
+        
+        if ((tutorialStep === 4 || tutorialStep === 7) && isNearNPC) {
+            if (tutorialStep === 4) {
+                console.log("🎉 Letter와 성공적으로 상호작용! (Kaboom 이벤트)");
+                handleLetterInteraction();
+            } else if (tutorialStep === 7) {
+                console.log("🎉 NPC와 성공적으로 상호작용! (Kaboom 이벤트)");
+                handleNPCInteraction();
+            }
+        } else {
+            console.log(`❌ 상호작용 조건 불만족: tutorialStep=${tutorialStep}, isNearNPC=${isNearNPC}`);
+        }
+    });
+
+    // M키 음악 토글 이벤트 (Kaboom)
+    k.onKeyPress("m", () => {
+        if (tutorialStep === 9) {
+            console.log("🎵 M키로 음악 토글!");
+            handleMusicToggle();
+        }
+    });
+
+    // Letter 상호작용 핸들러
+    function handleLetterInteraction() {
+        // Letter 상호작용 완료 후 바로 Friend 튜토리얼로
+        console.log("🏆 Letter 상호작용 완료!");
+        tutorialStep = 5; // 다음 단계로
+        
+        // 기존 텍스트들 제거
+        k.destroyAll("tutorialText");
+        
+        // Letter 상호작용 완료 메시지 (원래 텍스트 위치에)
+        const letterComplete = k.add([
+            k.text("잘했습니다!", {
+                font: "galmuri",
+                size: 28,
+                align: "center"
+            }),
+            k.color(50, 200, 50), // 녹색
+            k.pos(k.center().x, k.height() - 120), // 원래 텍스트 위치
+            k.anchor("center"),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        // 페이드 인
+        k.tween(letterComplete.opacity, 1, 1, (val) => {
+            letterComplete.opacity = val;
+        }).then(() => {
+            // 2초 후 페이드 아웃하고 Friend 튜토리얼
+            k.wait(2, () => {
+                k.tween(letterComplete.opacity, 0, 1, (val) => {
+                    letterComplete.opacity = val;
+                }).then(() => {
+                    letterComplete.destroy();
+                    showFriendTutorial(); // Letter 다음에 친구 튜토리얼
+                });
+            });
+        });
+    }
+    
+    // NPC 상호작용 핸들러
+    function handleNPCInteraction() {
+        // 말풍선 생성 및 애니메이션 효과
+        if (npc && tutorialStep === 7) {
+            exclamationMark = k.add([
+                k.sprite("main-assets", { frame: 5776 }), // bubble_angry 스프라이트 사용
+                k.pos(npc.pos.x, npc.pos.y - 60), // NPC 위쪽에 표시
+                k.anchor("center"),
+                k.scale(2), // 기본 크기 2배
+                k.z(1000),
+                "bubble-indicator"
+            ]);
+            
+            // 말풍선 커지면서 흔들리는 애니메이션
+            k.tween(exclamationMark.scale, k.vec2(2.5, 2.5), 0.3, (val) => {
+                exclamationMark.scale = val;
+            }, k.easings.easeOutBack);
+            
+            // 흔들리기 효과 (좌우로 살짝)
+            const originalX = exclamationMark.pos.x;
+            let shakeCount = 0;
+            const shakeInterval = setInterval(() => {
+                if (exclamationMark && shakeCount < 6) {
+                    const shakeAmount = 3;
+                    exclamationMark.pos.x = originalX + (shakeCount % 2 === 0 ? shakeAmount : -shakeAmount);
+                    shakeCount++;
+                } else {
+                    clearInterval(shakeInterval);
+                    if (exclamationMark) {
+                        exclamationMark.pos.x = originalX; // 원래 위치로 복원
+                    }
+                }
+            }, 100); // 0.1초마다 흔들기
+            
+            // 1초 후 말풍선 제거하고 대화 시작
+            k.wait(1, () => {
+                if (exclamationMark) {
+                    exclamationMark.destroy();
+                    exclamationMark = null;
+                }
+                
+                // 대화 시작
+                startTutorialDialog();
+            });
+        }
+    }
+    
+    // 튜토리얼 대화 시스템
+    function startTutorialDialog() {
+        console.log("🎭 튜토리얼 대화 시작");
+        
+        // 튜토리얼 대화 내용
+        const dialogData = [
+            {
+                character: "???",
+                text: "..."
+            },
+            {
+                character: "???", 
+                text: "......"
+            },
+            {
+                character: "???",
+                text: "...깜짝이야!!!"
+            }
+        ];
+        
+        const shiftDialogData = [
+            {
+                character: "???",
+                text: "뭐야 넌! 처음보는 얼굴인데."
+            },
+            {
+                character: "???",
+                text: "왜 날 방해하는거야?"
+            }
+        ];
+        
+        let currentDialogIndex = 0;
+        let isDialogActive = true;
+        let dialogBox = null;
+        let dialogText = null;
+        let nameTab = null;
+        let nameText = null;
+        let helpText = null;
+        let helpTextVisible = false;
+        let helpTextTimer = null;
+        let isShiftTutorial = false;
+        
+        // 대화창 생성
+        function createDialogBox() {
+            // 대화창 배경
+            dialogBox = k.add([
+                k.rect(k.width() - 120, 160),
+                k.pos(60, k.height() - 200),
+                k.color(0, 0, 0),
+                k.opacity(0.8),
+                k.z(2000),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 테두리
+            k.add([
+                k.rect(k.width() - 120, 160),
+                k.pos(60, k.height() - 200),
+                k.outline(3, k.rgb(255, 255, 255)),
+                k.z(2001),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 이름 탭
+            nameTab = k.add([
+                k.rect(120, 40),
+                k.pos(80, k.height() - 220),
+                k.color(50, 50, 50),
+                k.z(2002),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 이름 탭 테두리
+            k.add([
+                k.rect(120, 40),
+                k.pos(80, k.height() - 220),
+                k.outline(2, k.rgb(255, 255, 255)),
+                k.z(2003),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 이름 텍스트
+            nameText = k.add([
+                k.text("???", {
+                    size: 18,
+                    font: "galmuri"
+                }),
+                k.pos(140, k.height() - 200),
+                k.anchor("center"),
+                k.color(255, 255, 255),
+                k.z(2004),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            // 대화 텍스트
+            dialogText = k.add([
+                k.text("", {
+                    size: 20,
+                    font: "galmuri",
+                    width: k.width() - 180
+                }),
+                k.pos(90, k.height() - 170),
+                k.color(255, 255, 255),
+                k.z(2004),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            showCurrentDialog();
+        }
+        
+        // 현재 대화 표시
+        function showCurrentDialog() {
+            hideHelpText(); // 기존 도움말 텍스트 제거
+            
+            if (!isShiftTutorial && currentDialogIndex < dialogData.length) {
+                const dialog = dialogData[currentDialogIndex];
+                dialogText.text = dialog.text;
+                nameText.text = dialog.character;
+                
+                // 1초 후 도움말 텍스트 표시
+                helpTextTimer = setTimeout(() => {
+                    showHelpText("스페이스 키를 누르세요");
+                }, 1000);
+                
+            } else if (isShiftTutorial && currentDialogIndex < shiftDialogData.length) {
+                const dialog = shiftDialogData[currentDialogIndex];
+                dialogText.text = dialog.text;
+                nameText.text = dialog.character;
+                
+                // 첫 번째 Shift 대화에서만 도움말 표시
+                if (currentDialogIndex === 0) {
+                    helpTextTimer = setTimeout(() => {
+                        showHelpText("Shift 키를 누르면 빠르게 넘길 수 있습니다!");
+                    }, 100);
+                }
+            }
+        }
+        
+        // 도움말 텍스트 표시
+        function showHelpText(text) {
+            if (helpText) {
+                helpText.destroy();
+                helpText = null;
+            }
+            
+            helpText = k.add([
+                k.text(text, {
+                    size: 14,
+                    font: "galmuri"
+                }),
+                k.pos(k.center().x, k.height() - 240),
+                k.anchor("center"),
+                k.color(150, 150, 150),
+                k.opacity(0),
+                k.z(2005),
+                k.fixed(),
+                "tutorialDialog"
+            ]);
+            
+            helpTextVisible = true;
+            
+            // 깜박이는 효과
+            const blinkTween = () => {
+                if (helpTextVisible && helpText) {
+                    k.tween(helpText.opacity, 1, 0.8, (val) => {
+                        if (helpText) helpText.opacity = val;
+                    }).then(() => {
+                        if (helpTextVisible && helpText) {
+                            k.tween(helpText.opacity, 0.3, 0.8, (val) => {
+                                if (helpText) helpText.opacity = val;
+                            }).then(() => {
+                                if (helpTextVisible) {
+                                    blinkTween();
+                                }
+                            });
+                        }
+                    });
+                }
+            };
+            blinkTween();
+        }
+        
+        // 도움말 텍스트 숨기기
+        function hideHelpText() {
+            helpTextVisible = false;
+            if (helpText) {
+                helpText.destroy();
+                helpText = null;
+            }
+            if (helpTextTimer) {
+                clearTimeout(helpTextTimer);
+                helpTextTimer = null;
+            }
+        }
+        
+        // 키 입력 처리
+        const dialogKeyHandler = (e) => {
+            if (!isDialogActive) return;
+            
+            if (e.type === 'keydown') {
+                if (e.code === 'Space' && !isShiftTutorial) {
+                    e.preventDefault();
+                    hideHelpText();
+                    
+                    currentDialogIndex++;
+                    if (currentDialogIndex >= dialogData.length) {
+                        // 첫 번째 대화 완료, Shift 튜토리얼 시작
+                        isShiftTutorial = true;
+                        currentDialogIndex = 0;
+                        showCurrentDialog();
+                    } else {
+                        showCurrentDialog();
+                    }
+                } else if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && isShiftTutorial) {
+                    e.preventDefault();
+                    hideHelpText();
+                    
+                    currentDialogIndex++;
+                    if (currentDialogIndex >= shiftDialogData.length) {
+                        // 모든 대화 완료
+                        endDialog();
+                    } else {
+                        showCurrentDialog();
+                    }
+                }
+            }
+        };
+        
+        // 대화 종료
+        function endDialog() {
+            console.log("🎭 대화 종료");
+            isDialogActive = false;
+            hideHelpText();
+            
+            // 이벤트 리스너 제거
+            document.removeEventListener('keydown', dialogKeyHandler);
+            document.removeEventListener('keyup', dialogKeyHandler);
+            
+            // 대화창 페이드 아웃
+            const allDialogElements = k.get("tutorialDialog");
+            allDialogElements.forEach(element => {
+                if (element.opacity !== undefined) {
+                    k.tween(element.opacity, 0, 1, (val) => {
+                        element.opacity = val;
+                    });
+                }
+            });
+            
+            // 1초 후 대화창 제거 및 다음 단계
+            k.wait(1, () => {
+                k.destroyAll("tutorialDialog");
+                showFinalWellDoneMessage();
+            });
+        }
+        
+        // 이벤트 리스너 등록
+        document.addEventListener('keydown', dialogKeyHandler);
+        document.addEventListener('keyup', dialogKeyHandler);
+        
+        // 대화창 생성 및 시작
+        createDialogBox();
+    }
+    
+    // 최종 "잘했습니다" 메시지
+    function showFinalWellDoneMessage() {
+        tutorialStep = 8;
+        
+        const finalWellDone = k.add([
+            k.text("잘했습니다!", {
+                font: "galmuri",
+                size: 28,
+                align: "center"
+            }),
+            k.color(50, 200, 50), // 녹색
+            k.pos(k.center().x, k.height() - 120),
+            k.anchor("center"),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        // 페이드 인
+        k.tween(finalWellDone.opacity, 1, 1, (val) => {
+            finalWellDone.opacity = val;
+        }).then(() => {
+            // 2초 후 페이드 아웃하고 튜토리얼 완료 메시지
+            k.wait(2, () => {
+                k.tween(finalWellDone.opacity, 0, 1, (val) => {
+                    finalWellDone.opacity = val;
+                }).then(() => {
+                    finalWellDone.destroy();
+                    showTutorialCompleteMessage();
+                });
+            });
+        });
+    }
+    
+    // 튜토리얼 완료 메시지
+    function showTutorialCompleteMessage() {
+        tutorialStep = 9;
+        
+        const completeText = k.add([
+            k.text("튜 토 리 얼 을  모 두  마 치 셨 습 니 다 .", { 
+                size: 26,
+                font: "galmuri"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.center().y),
+            k.color(111, 111, 111), // 살짝 옅은 검은색
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        // 페이드 인
+        k.tween(completeText.opacity, 1, 1, (val) => {
+            completeText.opacity = val;
+        }).then(() => {
+            // 3초 후 페이드 아웃
+            k.wait(3, () => {
+                k.tween(completeText.opacity, 0, 1, (val) => {
+                    completeText.opacity = val;
+                }).then(() => {
+                    completeText.destroy();
+                    // 여기서 메인 게임으로 전환하거나 다른 씬으로 이동
+                    console.log("🎉 튜토리얼 완전히 종료!");
+                });
+            });
+        });
+    }
+    
+    // M키 음악 토글 핸들러
+    function handleMusicToggle() {
+        // 음악 토글 (간단한 예시 - 실제로는 audioManager 사용)
+        try {
+            // 현재 볼륨 체크해서 토글
+            const currentVolume = audioManager.getBGMVolume();
+            if (currentVolume > 0) {
+                audioManager.setBGMVolume(0);
+                console.log("🔇 음악 끔");
+            } else {
+                audioManager.setBGMVolume(0.5);
+                console.log("🔊 음악 켬");
+            }
+            
+            // 튜토리얼 완료
+            showFinalComplete();
+        } catch (error) {
+            console.error("음악 토글 실패:", error);
+            // 에러가 발생해도 튜토리얼은 완료
+            showFinalComplete();
+        }
+    }
+
+    k.onUpdate(() => {
+        if (!player || (tutorialStep !== 1 && tutorialStep !== 4 && tutorialStep !== 7)) {
+            // 튜토리얼 단계가 바뀌면 키 상태 초기화
+            if (tutorialStep !== 1) {
+                keyStates = {
+                    left: false,
+                    right: false,
+                    up: false,
+                    down: false
+                };
+            }
+            return; // tutorialStep 7도 허용
+        }
+        
+        // 이동 벡터
+        let moveX = 0;
+        let moveY = 0;
+        let isMoving = false;
+        let direction = null;
+        
+        // 키 입력 처리 및 애니메이션 (Kaboom과 브라우저 이벤트 모두 체크)
+        if (k.isKeyDown("left") || keyStates.left) {
+            moveX = -MOVE_SPEED * k.dt();
+            isMoving = true;
+            direction = "left";
+        }
+        if (k.isKeyDown("right") || keyStates.right) {
+            moveX = MOVE_SPEED * k.dt();
+            isMoving = true;
+            direction = "right";
+        }
+        if (k.isKeyDown("up") || keyStates.up) {
+            moveY = -MOVE_SPEED * k.dt();
+            isMoving = true;
+            direction = "up";
+        }
+        if (k.isKeyDown("down") || keyStates.down) {
+            moveY = MOVE_SPEED * k.dt();
+            isMoving = true;
+            direction = "down";
+        }
+        
+        // 디버깅: 키 입력 확인 (간헐적으로만)
+        if (isMoving && Math.random() < 0.01) { // 1% 확률로만 로그 출력
+            console.log(`🎮 키 입력 감지: ${direction}, moveX: ${moveX.toFixed(2)}, moveY: ${moveY.toFixed(2)}`);
+        }
+        
+        // 애니메이션 처리
+        if (isMoving && direction) {
+            // 방향이 바뀌었거나 처음 움직이기 시작할 때만 애니메이션 변경
+            if (!isCurrentlyMoving || currentAnimDirection !== direction) {
+                console.log(`🎭 애니메이션 변경: player-${direction}`);
+                player.play(`player-${direction}`);
+                currentAnimDirection = direction;
+            }
+            isCurrentlyMoving = true;
+        } else {
+            // 움직이지 않을 때는 idle 애니메이션 (한 번만)
+            if (isCurrentlyMoving) {
+                console.log(`🎭 idle 애니메이션으로 변경: player-idle-${currentAnimDirection}`);
+                player.play(`player-idle-${currentAnimDirection}`);
+                isCurrentlyMoving = false;
+            }
+        }
+        
+        // 이동 처리
+        if (isMoving) {
+            // tutorialStep 1에서 방향별 시간 추적
+            if (tutorialStep === 1) {
+                // 현재 프레임 시간 (밀리초)
+                const deltaTime = k.dt() * 1000;
+                
+                // 각 방향별로 시간 누적
+                if (direction === "left") {
+                    updateDirectionTime("left", deltaTime);
+                } else if (direction === "right") {
+                    updateDirectionTime("right", deltaTime);
+                } else if (direction === "up") {
+                    updateDirectionTime("up", deltaTime);
+                } else if (direction === "down") {
+                    updateDirectionTime("down", deltaTime);
+                }
+                
+                // 첫 번째 이동 감지 (기존 로직은 유지하되 자동 진행은 제거)
+                if (!hasPlayerMoved) {
+                    hasPlayerMoved = true;
+                    console.log("🎉 플레이어 첫 이동 감지!");
+                    // 자동 진행 제거 - 이제 모든 방향 완료 후에만 진행
+                }
+            }
+            
+            // 새로운 위치 계산
+            const newX = player.pos.x + moveX;
+            const newY = player.pos.y + moveY;
+            
+            // tutorialStep 1에서는 반경 제한, tutorialStep 4에서는 자유 이동
+            if (tutorialStep === 1) {
+                // 중심점으로부터의 거리 계산
+                const distanceFromCenter = Math.sqrt(
+                    Math.pow(newX - CENTER_X, 2) + Math.pow(newY - CENTER_Y, 2)
+                );
+                
+                // 반경 내에서만 이동 허용
+                if (distanceFromCenter <= MOVE_RADIUS) {
+                    player.pos.x = newX;
+                    player.pos.y = newY;
+                } else {
+                    // 반경을 벗어나는 경우, 반경 경계에 위치시킴
+                    const angle = Math.atan2(newY - CENTER_Y, newX - CENTER_X);
+                    player.pos.x = CENTER_X + Math.cos(angle) * MOVE_RADIUS;
+                    player.pos.y = CENTER_Y + Math.sin(angle) * MOVE_RADIUS;
+                }
+            } else if (tutorialStep === 4 || tutorialStep === 7) {
+                // tutorialStep 4와 7에서는 자유 이동 (화면 경계만 체크)
+                const padding = 50;
+                player.pos.x = Math.max(padding, Math.min(k.width() - padding, newX));
+                player.pos.y = Math.max(padding, Math.min(k.height() - padding, newY));
+            }
+        }
+        
+        // tutorialStep 4와 7에서 NPC와의 근접 감지
+        if ((tutorialStep === 4 || tutorialStep === 7) && player && npc) {
+            const distance = Math.sqrt(
+                Math.pow(player.pos.x - npc.pos.x, 2) + 
+                Math.pow(player.pos.y - npc.pos.y, 2)
+            );
+            
+            const INTERACTION_DISTANCE = 120; // 상호작용 가능 거리 (60에서 120으로 증가)
+            
+            // 디버깅: 거리 표시 (간헐적으로)
+            if (Math.random() < 0.01) { // 1% 확률로만 로그 출력
+                console.log(`📏 플레이어-NPC 거리: ${distance.toFixed(1)}px (상호작용: ${INTERACTION_DISTANCE}px)`);
+            }
+            
+            // 근접 여부만 확인 (말풍선은 상호작용 시에만 표시)
+            if (distance <= INTERACTION_DISTANCE) {
+                if (!isNearNPC) {
+                    isNearNPC = true;
+                    console.log("👫 NPC 근처에 도착! 스페이스바로 대화하세요.");
+                }
+    }
+    
+    // Friend 상호작용 튜토리얼
+    function showFriendTutorial() {
+        tutorialStep = 6;
+        
+        // NPC 제거
+        if (npc) {
+            npc.destroy();
+        }
+        
+        // student1 NPC 생성 (플레이어 오른쪽에)
+        npc = k.add([
+            k.sprite("main-assets", { frame: 3781 }), // student1 프레임 사용
+            k.anchor("center"),
+            k.pos(player.pos.x + 120, player.pos.y), // 플레이어 오른쪽에 120px 간격
+            k.scale(3.6), // 같은 크기
+            k.area({ width: 30, height: 86 }), // 콜라이더를 사람 크기에 맞게 조정
+            k.body({ isStatic: true }), // 정적 콜라이더
+            k.opacity(0), // 처음에는 투명
+            k.z(20),
+            "npc",
+            "student1" // 태그 변경
+        ]);
+        
+        // Friend 페이드 인
+        k.tween(npc.opacity, 1, 1, (val) => {
+            npc.opacity = val;
+        }).then(() => {
+            // Friend 튜토리얼 텍스트 표시
+            showFriendTutorialText();
+        });
+    }
+    
+    // Friend 튜토리얼 텍스트 표시
+    function showFriendTutorialText() {
+        tutorialStep = 7;
+        
+        const friendText = k.add([
+            k.text("친구에게 다가가서 스페이스바를 눌러 말을 거세요.", { 
+                size: 20,
+                font: "galmuri",
+                width: k.width() - 100,
+                align: "center"
+            }),
+            k.anchor("center"),
+            k.pos(k.center().x, k.height() - 120),
+            k.color(50, 200, 50), // 녹색
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+            "tutorialText"
+        ]);
+        
+        // 페이드 인
+        k.tween(friendText.opacity, 1, 1, (val) => {
+            friendText.opacity = val;
+        });
+    }
+    
+    // M키 음악 토글 핸들러
+    function handleMusicToggle() {
+        // 음악 토글 (간단한 예시 - 실제로는 audioManager 사용)
+        try {
+            if (audioManager.bgmMuted) {
+                audioManager.unmuteBGM();
+                console.log("🎵 BGM 음소거 해제");
+            } else {
+                audioManager.muteBGM();
+                console.log("🔇 BGM 음소거");
+            }
+        } catch (error) {
+            console.log("🎵 음악 토글 완료 (audioManager 없음)");
+        }
+        
+        // M키 튜토리얼 완료 메시지
+        tutorialStep = 10;
+        
+        // 기존 텍스트들 제거
+        k.destroyAll("tutorialText");
+        
+        // "잘했습니다" 메시지
+        const finalWellDone = k.add([
+            k.text("잘했습니다!", {
+                font: "galmuri",
+                size: 28,
+                align: "center"
+            }),
+            k.color(50, 200, 50), // 녹색
+            k.pos(k.center().x, k.height() - 120),
+            k.anchor("center"),
+            k.opacity(0),
+            k.z(10),
+            k.fixed(),
+        ]);
+        
+        // 페이드 인
+        k.tween(finalWellDone.opacity, 1, 1, (val) => {
+            finalWellDone.opacity = val;
+        }).then(() => {
+            // 2초 후 페이드 아웃하고 최종 완료 메시지
+            k.wait(2, () => {
+                k.tween(finalWellDone.opacity, 0, 1, (val) => {
+                    finalWellDone.opacity = val;
+                }).then(() => {
+                    finalWellDone.destroy();
+                    showTutorialCompleteMessage();
+                });
+            });
+        });
+    }
+
+    // 씬 정리
+    k.onSceneLeave(() => {
+        document.body.style.backgroundColor = '';
+        
+        // 브라우저 키 이벤트 리스너 제거
+        if (documentKeyHandler) {
+            document.removeEventListener('keydown', documentKeyHandler);
+            document.removeEventListener('keyup', documentKeyHandler);
+        }
+        
+        // 대화 시스템 정리
+        k.destroyAll("tutorialDialog");
+        
+        // 페이드 오버레이 정리 (혹시 남아있다면)
+        const fadeOverlays = document.querySelectorAll('div[style*="position: fixed"][style*="z-index: 10000"]');
+        fadeOverlays.forEach(overlay => {
+            if (overlay.parentNode) {
+                document.body.removeChild(overlay);
+                console.log("🧹 Tutorial 페이드 오버레이 정리됨");
+            }
+        });
+        console.log("✅ Tutorial 씬 종료");
+    });
+
+    // 상호작용 감지 시스템
+    k.onUpdate(() => {
+        if (!player || !npc || (tutorialStep !== 4 && tutorialStep !== 7)) return;
+        
+        // 플레이어와 NPC 간의 거리 계산
+        const distance = player.pos.dist(npc.pos);
+        
+        // 이동 추적 및 애니메이션 처리 (tutorialStep 1에서만)
+        if (tutorialStep === 1 && player) {
+            const deltaTime = k.dt() * 1000; // 밀리초로 변환
+            
+            // 키 상태에 따른 이동 처리
+            let isMoving = false;
+            const moveVector = k.vec2(0, 0);
+            
+            if (keyStates.left) {
+                moveVector.x -= MOVE_SPEED * k.dt();
+                updateDirectionTime('left', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.right) {
+                moveVector.x += MOVE_SPEED * k.dt();
+                updateDirectionTime('right', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.up) {
+                moveVector.y -= MOVE_SPEED * k.dt();
+                updateDirectionTime('up', deltaTime);
+                isMoving = true;
+            }
+            if (keyStates.down) {
+                moveVector.y += MOVE_SPEED * k.dt();
+                updateDirectionTime('down', deltaTime);
+                isMoving = true;
+            }
+            
+            // 이동 제한 (반경 내에서만)
+            const newPos = player.pos.add(moveVector);
+            const distanceFromCenter = newPos.dist(k.vec2(CENTER_X, CENTER_Y));
+            
+            if (distanceFromCenter <= MOVE_RADIUS) {
+                player.pos = newPos;
+                hasPlayerMoved = true;
+            }
+            
+            // 애니메이션 처리
+            if (isMoving) {
+                let direction = "down"; // 기본값
+                
+                // 우선순위: 상하 > 좌우
+                if (keyStates.up) {
+                    direction = "up";
+                } else if (keyStates.down) {
+                    direction = "down";
+                } else if (keyStates.left) {
+                    direction = "left";
+                } else if (keyStates.right) {
+                    direction = "right";
+                }
+                
+                if (currentAnimDirection !== direction || !isCurrentlyMoving) {
+                    player.play(`player-walk-${direction}`);
+                    currentAnimDirection = direction;
+                    isCurrentlyMoving = true;
+                }
+            } else {
+                if (isCurrentlyMoving) {
+                    player.play(`player-idle-${currentAnimDirection}`);
+                    isCurrentlyMoving = false;
+                }
+            }
+        }
+        
+        // 상호작용 감지 (tutorialStep 4, 7에서만)
+        if ((tutorialStep === 4 || tutorialStep === 7) && player && npc) {
+            // 상호작용 거리 (100px)
+            if (distance <= 100) {
+                if (!isNearNPC) {
+                    isNearNPC = true;
+                    console.log("💬 NPC에 가까워짐, 상호작용 가능");
+                    
+                    // 하트 표시
+                    if (exclamationMark) {
+                        exclamationMark.destroy();
+                    }
+                    exclamationMark = k.add([
+                        k.sprite("main-assets", { frame: 5777 }), // heart 스프라이트 사용
+                        k.pos(npc.pos.x, npc.pos.y - 60), // NPC 위쪽에 표시
+                        k.anchor("center"),
+                        k.scale(2), // 기본 크기 2배
+                        k.z(1000),
+                        "interaction-indicator"
+                    ]);
+                    
+                    // 하트 애니메이션 (위아래로 천천히 움직임)
+                    const originalY = exclamationMark.pos.y;
+                    const floatTween = () => {
+                        if (exclamationMark) {
+                            k.tween(exclamationMark.pos.y, originalY - 10, 1, (val) => {
+                                if (exclamationMark) exclamationMark.pos.y = val;
+                            }).then(() => {
+                                if (exclamationMark) {
+                                    k.tween(exclamationMark.pos.y, originalY, 1, (val) => {
+                                        if (exclamationMark) exclamationMark.pos.y = val;
+                                    }).then(() => {
+                                        if (exclamationMark) {
+                                            floatTween();
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                    };
+                    floatTween();
+                }
+            } else {
+                if (isNearNPC) {
+                    isNearNPC = false;
+                    console.log("� NPC에서 멀어짐");
+                    
+                    // 하트 표시 제거
+                    if (exclamationMark) {
+                        exclamationMark.destroy();
+                        exclamationMark = null;
+                    }
+                }
+            }
+        }
+    });
+}

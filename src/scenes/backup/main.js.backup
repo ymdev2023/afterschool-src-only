@@ -1,0 +1,407 @@
+import k from "./kaboomContext.js";
+import mainMenu from "./scenes/mainMenu.js";
+<<<<<<< HEAD
+import title from "./scenes/title.js";
+import front from "./scenes/front.js";
+=======
+import prologue from "./scenes/prologue.js";
+>>>>>>> 168311de5f598678acb6febbe3dee27fd4ff40bf
+import schoolfront from "./scenes/schoolfront.js";
+import schoolfirst from "./scenes/schoolfirst.js";
+import schoolsecond from "./scenes/schoolsecond.js";
+import intro from "./scenes/intro.js";
+// import house from "./scenes/temp/house.js"; // 수정된 부분: 사용하지 않으므로 주석 처리
+// import dungeon from "./scenes/temp/dungeon.js"; // 수정된 부분: 사용하지 않으므로 주석 처리
+import credits from "./scenes/credits.js";
+import tutorial from "./scenes/tutorial.js";
+
+// 퀘스트 시스템 초기화
+import { initializeQuests } from "./systems/questDefinitions.js";
+import { InventoryManager } from "./systems/inventoryManager.js";
+
+k.loadFont("galmuri", "assets/fonts/galmuri.ttf"); // 수정된 부분: fonts 폴더로 이동
+k.loadFont("gameboy", "assets/fonts/gb.ttf"); // 수정된 부분: fonts 폴더로 이동
+k.loadFont("bitbit", "assets/fonts/bitbit.ttf"); // 수정된 부분: fonts 폴더로 이동
+k.loadFont("stardust", "assets/fonts/stardust.ttf"); // 수정된 부분: fonts 폴더로 이동
+k.loadFont("neodgm", "assets/fonts/neodgm.ttf"); // 수정된 부분: fonts 폴더로 이동
+k.loadSound("rpg-front-bgm", "assets/sounds/rpg-front-bgm.mp3"); // 수정된 부분: world-bgm → rpg-front-bgm
+k.loadSound("rpg-main-bgm", "assets/sounds/rpg-main-bgm.mp3"); // 수정된 부분: main-bgm → rpg-main-bgm
+k.loadSound("rpg-first-bgm", "assets/sounds/rpg-first-bgm.mp3"); // 수정된 부분: house-bgm → rpg-first-bgm
+k.loadSound("rpg-second-bgm", "assets/sounds/rpg-second-bgm.mp3"); // 수정된 부분: dungeon-bgm → rpg-second-bgm
+k.loadSound("confirm-beep-sfx", "assets/sounds/confirmbeep-sfx.wav");
+k.loadSound("boop-sfx", "assets/sounds/boop-sfx.wav");
+k.loadSound("coin-sfx", "assets/sounds/coin-sfx.mp3");
+k.loadSound("bubble-sfx", "assets/sounds/bubble-sfx.mp3");
+k.loadSound("ghost-sfx", "assets/sounds/ghost-sfx.wav"); // 추가된 부분
+k.loadSound("talk-sfx", "assets/sounds/talk-sfx.mp3"); // 추가된 부분: 타이핑 효과음
+k.loadSound("text-sfx", "assets/sounds/text-sfx.wav"); // 추가된 부분: 텍스트 효과음
+k.loadSound("kick-sfx", "assets/sounds/kick-sfx.mp3"); // 추가된 부분: 킥 효과음
+k.loadSound("cat-sfx", "assets/sounds/cat-sfx.mp3"); // 추가된 부분: 고양이 효과음
+
+// 타이틀 화면 에셋 로드 (작은 이미지들만)
+k.loadSprite("title_bg", "assets/images/title_img.png");
+// title.js에서 순수 JavaScript Canvas로 처리하므로 큰 이미지들은 제거
+// k.loadSprite("title_layer1", "assets/images/titles/title_01_bg.png"); // 2563x1280 - 제거
+// k.loadSprite("title_layer2", "assets/images/titles/title_02_star.png"); // 제거  
+// k.loadSprite("title_layer3", "assets/images/titles/title_03_mini.png"); // 제거
+// k.loadSprite("title_layer4", "assets/images/titles/title_04_large.png"); // 제거
+// k.loadSprite("title_layer5", "assets/images/titles/title_05_characters.png"); // 제거
+// k.loadSprite("title_button_normal", "assets/images/titles/title_button_notpressed.png"); // 제거
+// k.loadSprite("title_button_pressed", "assets/images/titles/title_button_pressed.png"); // 제거
+
+// 추가된 부분: Animalese 문자별 오디오 파일들 로드
+const animalese_letters = [
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "h",
+    "i",
+    "j",
+    "k",
+    "l",
+    "m",
+    "n",
+    "o",
+    "p",
+    "q",
+    "r",
+    "s",
+    "t",
+    "u",
+    "v",
+    "w",
+    "x",
+    "y",
+    "z",
+];
+
+animalese_letters.forEach((letter) => {
+    k.loadSound(`animalese-${letter}`, `assets/sounds/animalese/${letter}.wav`);
+});
+
+// Animalese digraphs 로드
+const animalese_digraphs = ["ch", "sh", "ph", "th", "wh"];
+animalese_digraphs.forEach((digraph) => {
+    k.loadSound(
+        `animalese-${digraph}`,
+        `assets/sounds/animalese/${digraph}.wav`
+    );
+});
+
+// Animalese 특수문자용 오디오
+k.loadSound("animalese-bebebese", "assets/sounds/animalese/bebebese_slow.wav");
+
+// 추가된 부분: 말풍선 스프라이트 로드 (임시로 제거 - 404 에러 방지)
+// k.loadSprite("speech-bubble", "assets/speech_bubble_animation-11x11.png");
+
+// 추가된 부분: 퀘스트 느낌표 스프라이트 로드
+k.loadSprite("quest-exclamation", "assets/tiny_speech_indicators-11x11.png", {
+    sliceX: 8, // 수정된 부분: 가로로 8개 프레임
+    sliceY: 1, // 수정된 부분: 세로로 1줄
+    // 각 프레임별 감정 상태 매핑:
+    // 0: 퀘스트 있는 상태
+    // 1: 매우 만족한 상태
+    // 2: 그냥 그런 상태
+    // 3: 슬픈상태
+    // 4: 화남
+    // 5: 언짢음
+    // 6: 만족한 상태
+    // 7: 빈 말풍선
+});
+k.loadSprite(
+    "speech-bubble-animation",
+    "assets/speech_bubble_animation-11x11.png"
+);
+k.loadSprite(
+    "tiny-speech-indicators",
+    "assets/tiny_speech_indicators-11x11.png",
+    {
+        sliceX: 8, // 수정된 부분: 8개 프레임으로 나누기
+        sliceY: 1, // 1줄
+    }
+);
+
+<<<<<<< HEAD
+=======
+// 인벤토리 UI 스프라이트 로드
+k.loadSprite("inventory-background", "assets/maps/inventory/Inventory_background.png");
+k.loadSprite("inventory-bar", "assets/maps/inventory/Inventory_Bar.png");
+k.loadSprite("inventory-slot", "assets/maps/inventory/Inventory_Slot.png");
+k.loadSprite("inventory-select", "assets/maps/inventory/Inventory_select.png");
+
+k.loadSprite("assets", "./assets/maps/temp/topdownasset.png", {
+    // 수정된 부분: temp 폴더로 이동
+    sliceX: 39,
+    sliceY: 31,
+    anims: {
+        "player-idle-down": 952,
+        "player-down": {
+            from: 952,
+            to: 955,
+            loop: true,
+        },
+        "player-idle-side": 992,
+        "player-side": {
+            from: 992,
+            to: 994,
+            loop: true,
+        },
+        "player-idle-up": 1030,
+        "player-up": {
+            from: 1030,
+            to: 1033,
+            loop: true,
+        },
+        "player-attack-up": 1110,
+        "player-attack-down": 1108,
+        "player-attack-left": 1109,
+        "player-attack-right": 1111,
+        "slime-idle-down": 858,
+        "slime-down": { from: 858, to: 859, loop: true },
+        "slime-idle-side": 860,
+        "slime-side": { from: 860, to: 861, loop: true },
+        "slime-idle-up": 897,
+        "slime-up": { from: 897, to: 898, loop: true },
+        "oldman-down": 866,
+        "oldman-side": 907,
+        "oldman-up": 905,
+        "ghost-down": { from: 862, to: 863, loop: true },
+        note: 874,
+    },
+});
+>>>>>>> 168311de5f598678acb6febbe3dee27fd4ff40bf
+
+
+k.loadSprite("test-assets", "assets/images/rpg_0_spritesheet.png", {
+    // 수정된 부분: images 폴더로 이동
+    sliceX: 50,
+    sliceY: 75,
+    anims: {
+        // 새 플레이어 애니메이션 (50x75 = 3750 총 프레임, 0-3749 인덱스)
+        "player-idle-down": 1015,
+        "player-down": {
+            from: 1015,
+            to: 1018,
+            loop: true,
+            speed: 6, // 수정된 부분: 애니메이션 속도 조절 (기본값보다 느리게)
+        },
+        // 추가된 부분: left/right 개별 애니메이션
+        "player-idle-left": 1173,
+        "player-left": {
+            from: 1173,
+            to: 1176,
+            loop: true,
+            speed: 6,
+        },
+        "player-idle-right": 1267,
+        "player-right": {
+            from: 1252,
+            to: 1257,
+            loop: true,
+            speed: 6,
+        },
+        "player-idle-up": 1094,
+        "player-up": {
+            from: 1094,
+            to: 1097,
+            loop: true,
+            speed: 6, // 수정된 부분: 애니메이션 속도 조절
+        },
+        // sit 애니메이션
+        "player-sit-up": 1020,
+        "player-sit-down": 1020,
+        // 추가된 부분: left/right 개별 sit 애니메이션
+        "player-sit-left": 1494,
+        "player-sit-right": 1495,
+
+        student1: 728,
+        student2: 976,
+        student3: 1177,
+        student4: 483,
+        student5: 1125,
+        student6: 434,
+        student7: 375,
+        student8: 927,
+
+        // NPC 캐릭터들
+        director: 435,
+        cat: 479,
+        facil: 436,
+
+        // 편지 오브젝트 (50x75 범위 내 새로운 인덱스)
+        letter1: 1278,
+        letter2: 1279,
+        letter3: 1280,
+
+        // 추가된 부분: mushroom 오브젝트
+        mushroom: 1282, // 수정된 부분: mushroom 인덱스 1278 사용
+
+        // 추가된 부분: ball (피구공) 오브젝트
+        ball: 1283, // 피구공 스프라이트 인덱스
+    },
+});
+
+// front.json을 위한 front-assets 스프라이트 로드
+k.loadSprite("front-assets", "assets/images/rpg_spritesheet_front.png", {
+    sliceX: 79, // front.json의 실제 정보: 1896/24 = 79열
+    sliceY: 79, // front.json의 실제 정보: 1896/24 = 79행
+    anims: {
+        // 새 플레이어 애니메이션 (24x24 타일 시스템용)
+        "player-idle-down": 1015,
+        "player-down": {
+            from: 1015,
+            to: 1018,
+            loop: true,
+            speed: 6,
+        },
+        "player-idle-left": 1173,
+        "player-left": {
+            from: 1173,
+            to: 1176,
+            loop: true,
+            speed: 6,
+        },
+        "player-idle-right": 1267,
+        "player-right": {
+            from: 1252,
+            to: 1257,
+            loop: true,
+            speed: 6,
+        },
+        "player-idle-up": 1094,
+        "player-up": {
+            from: 1094,
+            to: 1097,
+            loop: true,
+            speed: 6,
+        },
+        // sit 애니메이션
+        "player-sit-up": 1020,
+        "player-sit-down": 1020,
+        "player-sit-left": 1099,
+        "player-sit-right": 1100,
+
+        // NPC들도 front-assets에 추가 (필요한 경우)
+        director: 435,
+        cat: 479,
+        
+        // 편지 오브젝트
+        letter1: 5299,
+        letter2: 5300,
+        letter3: 5301,
+    },
+});
+
+// 하트 스프라이트 추가 (UI용)
+k.loadSprite("full-heart", "assets/images/rpg_0_spritesheet.png", {
+    sliceX: 50,
+    sliceY: 75,
+    anims: {
+        "full-heart": 1300, // 적절한 인덱스로 조정 필요
+    },
+});
+
+k.loadSprite("half-heart", "assets/images/rpg_0_spritesheet.png", {
+    sliceX: 50,
+    sliceY: 75,
+    anims: {
+        "half-heart": 1301, // 적절한 인덱스로 조정 필요
+    },
+});
+
+k.loadSprite("empty-heart", "assets/images/rpg_0_spritesheet.png", {
+    sliceX: 50,
+    sliceY: 75,
+    anims: {
+        "empty-heart": 1302, // 적절한 인덱스로 조정 필요
+    },
+});
+
+
+
+// // 추가된 부분: 16x32 플레이어 캐릭터 스프라이트시트 (rpg_cha.png) - 활성화
+// k.loadSprite("player-tall", "assets/maps/rpg_cha.png", {
+//     sliceX: 4, // 4프레임씩 (down 4개, up 4개, left 4개, right 4개)
+//     sliceY: 4, // 4방향 (down, up, left, right 순)
+//     anims: {
+//         // Down 걷기 애니메이션 (첫 번째 줄)
+//         "player-tall-idle-down": 0,
+//         "player-tall-down": {
+//             from: 0,
+//             to: 3,
+//             loop: true,
+//             speed: 6,
+//         },
+//         // Up 걷기 애니메이션 (두 번째 줄)
+//         "player-tall-idle-up": 4,
+//         "player-tall-up": {
+//             from: 4,
+//             to: 7,
+//             loop: true,
+//             speed: 6,
+//         },
+//         // Left 걷기 애니메이션 (세 번째 줄)
+//         "player-tall-idle-left": 8,
+//         "player-tall-left": {
+//             from: 8,
+//             to: 11,
+//             loop: true,
+//             speed: 6,
+//         },
+//         // Right 걷기 애니메이션 (네 번째 줄)
+//         "player-tall-idle-right": 12,
+//         "player-tall-right": {
+//             from: 12,
+//             to: 15,
+//             loop: true,
+//             speed: 6,
+//         },
+//         // 추가된 부분: Sit 애니메이션 (idle 프레임 사용)
+//         "player-tall-sit-down": 0,
+//         "player-tall-sit-up": 4,
+//         "player-tall-sit-left": 8,
+//         "player-tall-sit-right": 12,
+//     },
+// });
+
+const scenes = {
+    intro,
+<<<<<<< HEAD
+    front,
+=======
+    prologue,
+>>>>>>> 168311de5f598678acb6febbe3dee27fd4ff40bf
+    schoolfront,
+    schoolfirst,
+    schoolsecond,
+    // house, // 수정된 부분: 사용하지 않으므로 제거
+    // dungeon, // 수정된 부분: 사용하지 않으므로 제거
+    mainMenu,
+    title,
+    credits,
+    tutorial,
+};
+
+// 퀘스트 시스템 초기화
+console.log("🎯 퀘스트 시스템 초기화 중...");
+initializeQuests();
+
+// 인벤토리 시스템 초기화
+console.log("📦 인벤토리 시스템 초기화 중...");
+const inventoryManager = new InventoryManager(k);
+inventoryManager.initialize();
+
+// 전역에서 접근 가능하도록 설정
+k.inventoryManager = inventoryManager;
+
+console.log("📦 인벤토리 시스템 초기화 완료. 씬에서 UI 생성 예정");
+
+for (const sceneName in scenes) {
+    k.scene(sceneName, () => scenes[sceneName](k));
+}
+
+k.go("intro");

@@ -1,0 +1,173 @@
+import menuText from "../../content/menuText.js";
+import { gameState } from "../../state/stateManagers.js";
+import { colorizeBackground } from "../../utils.js";
+import { fadeInBGM } from "../utils.js ";
+
+export default function mainMenu(k) {
+    // 이미 메인 메뉴 BGM이 재생 중이 아닌 경우에만 시작
+    if (!gameState.isMainMenuBGMPlaying) {
+        fadeInBGM(k, "rpg-main-bgm"); // 수정된 부분: main-bgm → rpg-main-bgm
+        gameState.isMainMenuBGMPlaying = true;
+    }
+
+    const currentLocale = gameState.getLocale() ?? "korean";
+    gameState.setLocale(currentLocale);
+
+    const currentFont = currentLocale === "korean" ? "neodgm" : "gameboy";
+    const oppositeLocale = currentLocale === "korean" ? "english" : "korean";
+
+    const isKorean = currentLocale === "korean";
+
+    colorizeBackground(k, 255, 192, 203);
+
+    k.add([
+        k.text(menuText[currentLocale].title, {
+            size: 50,
+            font: "gameboy",
+            ...(isKorean ? { outline: { width: 2, color: k.BLACK } } : {}),
+        }),
+        k.anchor("center"),
+        k.pos(k.center().x, k.center().y - 140),
+    ]);
+
+    const menuLabels = menuText[currentLocale].menu;
+
+    const menuItems = [
+        {
+            label: menuLabels[0],
+            action: () => {
+                gameState.isMainMenuBGMPlaying = false; // BGM 상태 리셋
+                k.go("prologue");
+            },
+        },
+        {
+            label: menuLabels[1],
+            action: () => {
+                gameState.setLocale(oppositeLocale);
+                k.go("mainMenu");
+            },
+        },
+        {
+            label: menuLabels[2],
+            action: () => {
+                k.go("tutorial");
+            },
+        },
+        { label: menuLabels[3], action: () => k.go("credits") },
+    ];
+
+    let selectedIndex = 0;
+    const menuTextObjs = [];
+    const startY = k.center().y - 10;
+
+    // ✅ letterSpacing과 bold 추가 (한글인 경우만)
+    const textOptions = {
+        size: 42,
+        font: currentFont,
+        ...(isKorean
+            ? { letterSpacing: 15, outline: { width: 2, color: k.BLACK } }
+            : {}),
+    };
+
+    menuItems.forEach((item, index) => {
+        const label = k.add([
+            k.text(item.label, textOptions),
+            k.anchor("left"),
+            k.pos(k.center().x - 220, startY + index * 60),
+        ]);
+        menuTextObjs.push(label);
+    });
+
+    const cursor = k.add([
+        k.text("▶", {
+            size: 32,
+            font: currentFont,
+            ...(isKorean ? { outline: { width: 2, color: k.BLACK } } : {}),
+        }),
+        k.anchor("left"),
+        k.pos(k.center().x - 260, startY + selectedIndex * 60),
+    ]);
+
+    function updateCursor() {
+        cursor.pos.y = startY + selectedIndex * 60;
+    }
+
+    k.wait(0, updateCursor);
+
+    k.onKeyPress("down", () => {
+        k.play("confirm-beep-sfx");
+        selectedIndex = (selectedIndex + 1) % menuItems.length;
+        updateCursor();
+    });
+
+    k.onKeyPress("up", () => {
+        k.play("confirm-beep-sfx");
+        selectedIndex =
+            (selectedIndex - 1 + menuItems.length) % menuItems.length;
+        updateCursor();
+    });
+
+    k.onKeyPress("space", () => {
+        k.play("boop-sfx");
+        menuItems[selectedIndex].action();
+    });
+
+    // 게임패드 D패드 위/아래로 메뉴 이동
+    k.onGamepadButtonPress("dpad-up", () => {
+        console.log("🕹️ 메뉴 - D패드 위쪽 눌림");
+        k.play("confirm-beep-sfx");
+        selectedIndex =
+            (selectedIndex - 1 + menuItems.length) % menuItems.length;
+        updateCursor();
+    });
+
+    k.onGamepadButtonPress("dpad-down", () => {
+        console.log("🕹️ 메뉴 - D패드 아래쪽 눌림");
+        k.play("confirm-beep-sfx");
+        selectedIndex = (selectedIndex + 1) % menuItems.length;
+        updateCursor();
+    });
+
+    // 게임패드 ABXY 버튼으로 메뉴 선택 - 수정된 부분: A/B 매핑 변경
+    k.onGamepadButtonPress("east", () => {
+        // A버튼 - 확인
+        console.log("🅰️ 메뉴 - A버튼 눌림");
+        k.play("boop-sfx");
+        menuItems[selectedIndex].action();
+    });
+
+    k.onGamepadButtonPress("south", () => {
+        // B버튼 - 취소 (메뉴에서는 확인과 동일하게 처리)
+        console.log("🅱️ 메뉴 - B버튼 눌림");
+        k.play("boop-sfx");
+        menuItems[selectedIndex].action();
+    });
+
+    k.onGamepadButtonPress("west", () => {
+        // X버튼
+        console.log("❌ 메뉴 - X버튼 눌림");
+        k.play("boop-sfx");
+        menuItems[selectedIndex].action();
+    });
+
+    k.onGamepadButtonPress("north", () => {
+        // Y버튼
+        console.log("🔺 메뉴 - Y버튼 눌림");
+        k.play("boop-sfx");
+        menuItems[selectedIndex].action();
+    });
+
+    // ✅ M 키로 배경음 음소거
+    k.onKeyPress("m", () => {
+        if (gameState.bgmHandle) {
+            gameState.bgmHandle.paused = !gameState.bgmHandle.paused;
+        }
+    });
+
+    // 수정된 부분: 한글 자판 'ㅡ' (m키)도 음소거 토글
+    k.onKeyPress("ㅡ", () => {
+        if (gameState.bgmHandle) {
+            gameState.bgmHandle.paused = !gameState.bgmHandle.paused;
+        }
+    });
+}

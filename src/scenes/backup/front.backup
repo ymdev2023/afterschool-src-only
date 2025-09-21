@@ -1,0 +1,2796 @@
+import { healthBar } from "../uiComponents/healthbar.js";
+import {
+    generatePlayerComponents,
+    generateFrontPlayerComponents,
+    setPlayerControls,
+    watchPlayerHealth,
+} from "../entities/player.js";
+import { generateNoteComponents } from "../entities/note.js";
+import { gameState } from "../state/stateManagers.js";
+import { audioManager } from "../utils.js";
+import { gameDataManager } from "../systems/gameDataManager.js";
+
+import {
+    colorizeBackground,
+    fetchMapData,
+    drawBoundaries,
+    onAttacked,
+    onCollideWithPlayer,
+} from "../utils.js";
+
+
+import dialogues from "../content/Dialogue.js";
+import objectDialogues from "../content/objectDialogue.js";
+import { frontDialogues, frontObjectDialogues } from "../content/frontDialogue.js";
+import { dialog } from "../uiComponents/dialog.js";
+import { saveGameData, initializeGameData } from "../systems/saveSystem.js";
+import { createPanelWithHeader, createCloseButton, UI_THEMES } from "../uiComponents/nineSlicePanel.js";
+
+import {
+    toggleLocale,
+    toggleMute,
+    setupMainMenuShortcut,
+    initializeQuestBubbles,
+    updateQuestBubbles,
+    SPEECH_BUBBLE_STATES,
+} from "../utils.js";
+
+// 전역 퀘스트 항목들 (front.js 전체에서 접근 가능)
+let questItems = [];
+
+// 추가된 부분: 충돌 시 포물선 킥 함수
+function kickBallOnCollision(k, ball, player) {
+    const currentTime = Date.now();
+    const KICK_COOLDOWN = 1000; // 1초 쿨다운
+
+    // 쿨다운 체크
+    if (currentTime - ball.lastKickTime < KICK_COOLDOWN) {
+        return;
+    }
+
+    ball.lastKickTime = currentTime;
+
+    // 플레이어와 공의 위치 차이로 킥 방향 계산
+    const kickDirection = ball.pos.sub(player.pos).unit();
+    const kickDistance = 100;
+    const kickHeight = 20;
+
+    // 목표 위치 계산
+    const targetPos = ball.pos.add(kickDirection.scale(kickDistance));
+
+    // 킥 효과음 재생
+    k.play("boop-sfx");
+    k.play("kick-sfx");
+
+    // 기쁨의 말풍선 표시
+    k.wait(0.7, () => {
+        showJoyBubble(k, player);
+    });
+
+    // 포물선 애니메이션
+    const startPos = ball.pos.clone();
+    const duration = 0.8;
+    let animTime = 0;
+
+    ball.isMoving = true;
+
+    if (ball.body) {
+        ball.body.vel = k.vec2(0, 0);
+    }
+
+    const animateParabola = () => {
+        animTime += k.dt();
+        const progress = Math.min(animTime / duration, 1);
+
+        if (progress >= 1) {
+            ball.pos = targetPos;
+            ball.isMoving = false;
+
+            if (ball.body) {
+                ball.body.vel = k.vec2(0, 0);
+            }
+
+            console.log("🎾 공이 포물선을 그리며 날아갔습니다!");
+            return;
+        }
+
+        const x = k.lerp(startPos.x, targetPos.x, progress);
+        const baseY = k.lerp(startPos.y, targetPos.y, progress);
+        const parabolaOffset = kickHeight * Math.sin(progress * Math.PI);
+        const y = baseY - parabolaOffset;
+
+        ball.pos = k.vec2(x, y);
+
+        k.wait(0, animateParabola);
+    };
+
+    animateParabola();
+
+    console.log("🦵 플레이어가 공에 충돌하여 포물선 킥!");
+    
+    // 공 차기 퀘스트 완료 처리
+    if (window.completeQuestByTarget) {
+        window.completeQuestByTarget("object", "ball");
+    }
+}
+
+// 추가된 부분: 플레이어 위에 기쁨의 말풍선을 띄우는 함수
+function showJoyBubble(k, player) {
+    if (player.joyBubble && player.joyBubble.exists()) {
+        player.joyBubble.destroy();
+    }
+
+    const BUBBLE_OFFSET_X = 5; 
+    const BUBBLE_OFFSET_Y = -14;
+
+    const joyBubble = k.add([
+        k.sprite("tiny-speech-indicators", {
+            frame: SPEECH_BUBBLE_STATES.VERY_HAPPY,
+        }),
+        k.pos(player.pos.x + BUBBLE_OFFSET_X, player.pos.y + BUBBLE_OFFSET_Y),
+        k.scale(1.176), // 1.68의 70%: 1.68 * 0.7 = 1.176
+        k.z(20),
+        k.opacity(1.0),
+        "joy-bubble",
+    ]);
+
+    let time = 0;
+
+    joyBubble.onUpdate(() => {
+        time += k.dt();
+
+        if (player.exists()) {
+            joyBubble.pos.x = player.pos.x + BUBBLE_OFFSET_X;
+            if (time < 0.1) {
+                joyBubble.pos.y = player.pos.y + BUBBLE_OFFSET_Y;
+            } else {
+                joyBubble.pos.y =
+                    player.pos.y +
+                    BUBBLE_OFFSET_Y +
+                    Math.sin((time - 0.1) * 4) * 3;
+            }
+        }
+    });
+
+    player.joyBubble = joyBubble;
+
+    k.wait(2, () => {
+        if (joyBubble.exists()) {
+            k.tween(
+                joyBubble.opacity,
+                0,
+                0.5,
+                (val) => {
+                    joyBubble.opacity = val;
+                },
+                k.easings.easeOutQuad
+            ).then(() => {
+                if (joyBubble.exists()) {
+                    joyBubble.destroy();
+                }
+            });
+        }
+    });
+}
+
+// 퀘스트 완료 메시지 표시 함수 (전역 함수로 이동)
+function showQuestCompletionMessage(questTitle) {
+    const messageWidth = 800; // 500에서 800으로 늘려서 한 줄로 표시
+    const messageBg = k.add([
+        k.rect(messageWidth, 70), // 가로폭 800, 세로폭 70
+        k.pos(k.width() / 2, 80), // 퀘스트 아이콘과 평행한 높이
+        k.anchor("center"),
+        k.color(180, 150, 210), // 연보라색 배경
+        k.outline(1, k.rgb(80, 160, 80)), // 아웃라인 두께 1
+        k.z(200),
+        k.fixed(),
+        "quest-completion-message",
+    ]);
+    
+    const messageText = k.add([
+        k.text(`"${questTitle}" 을 완료했습니다!`, { // 한 줄로 변경 (\n 제거)
+            size: 18, // 16에서 18로 다시 키워서 가독성 개선
+            font: "galmuri",
+            align: "center",
+            width: messageWidth * 0.9 // 알림창 폭의 90%로 텍스트 폭 설정
+        }),
+        k.pos(k.width() / 2, 80),
+        k.anchor("center"),
+        k.color(255, 255, 255),
+        k.z(201),
+        k.fixed(),
+        "quest-completion-message",
+    ]);
+    
+    k.play("coin-sfx", { volume: 0.6 });
+    
+    // 3초 후 메시지 제거
+    k.wait(3, () => {
+        if (messageBg.exists()) messageBg.destroy();
+        if (messageText.exists()) messageText.destroy();
+    });
+}
+
+// 퀘스트 추가 메시지 표시 함수
+function showQuestAddedMessage(questTitle) {
+    const messageWidth = 800; // 완료 알림과 같은 크기로 늘림
+    const messageBg = k.add([
+        k.rect(messageWidth, 70),
+        k.pos(k.width() / 2, 80),
+        k.anchor("center"),
+        k.color(180, 150, 210), // 연보라색 배경 (추가 알림용)
+        k.outline(1, k.rgb(80, 80, 160)),
+        k.z(200),
+        k.fixed(),
+        "quest-added-message",
+    ]);
+    
+    const messageText = k.add([
+        k.text(`새로운 퀘스트: "${questTitle}" 이 추가되었습니다!`, {
+            size: 18, // 16에서 18로 키워서 가독성 개선
+            font: "galmuri",
+            align: "center",
+            width: messageWidth * 0.9 // 알림창 폭의 90%로 텍스트 폭 설정
+        }),
+        k.pos(k.width() / 2, 80),
+        k.anchor("center"),
+        k.color(255, 255, 255),
+        k.z(201),
+        k.fixed(),
+        "quest-added-message",
+    ]);
+    
+    k.play("coin-sfx", { volume: 0.6 });
+    
+    // 3초 후 메시지 제거
+    k.wait(3, () => {
+        if (messageBg.exists()) messageBg.destroy();
+        if (messageText.exists()) messageText.destroy();
+    });
+}
+
+// 퀘스트 UI 시스템
+function setupQuestUI(k, gameState) {
+    // 퀘스트 상태 관리
+    const questState = {
+        hasNewQuests: true, // 초기값은 true로 설정 (미완료 퀘스트가 있을 것으로 예상)
+        isPopupOpen: false,
+    };
+
+    // 퀘스트 아이콘 (화면 우측 상단)
+    const questIcon = k.add([
+        k.sprite("main-assets", {
+            frame: 5771, // 기본 열린편지로 시작 (미완료 퀘스트 있음)
+        }),
+        k.pos(k.width() - 120, 20), // 화면 우측 상단 (20px 왼쪽으로 이동)
+        k.scale(2),
+        k.z(1100), // z-index를 높여서 페이드 효과보다 위에
+        k.area(),
+        k.fixed(), // 카메라 이동에 고정
+        "quest-icon",
+    ]);
+    
+    // 설정 아이콘 (퀘스트 아이콘 오른쪽에)
+    const settingsIcon = k.add([
+        k.sprite("main-assets", {
+            frame: 5772, // 설정 아이콘
+        }),
+        k.pos(k.width() - 60, 20), // 퀘스트 아이콘 오른쪽에 배치 (20px 왼쪽으로 이동)
+        k.scale(2),
+        k.z(1100), // z-index를 높여서 페이드 효과보다 위에
+        k.area(),
+        k.fixed(),
+        "settings-icon",
+    ]);
+    
+    // 퀘스트 아이콘 상태 업데이트 함수
+    function updateQuestIcon() {
+        // 퀘스트 항목들 중에 미완료된 것이 있는지 확인
+        const currentQuestItems = window.questItems || questItems;
+        const hasIncompleteQuests = currentQuestItems && currentQuestItems.some(item => !item.completed);
+        
+        if (hasIncompleteQuests) {
+            questIcon.frame = 5771; // 열린편지 (미완료 퀘스트 있음)
+            questState.hasNewQuests = true;
+        } else {
+            questIcon.frame = 5770; // 닫힌편지 (모든 퀘스트 완료)
+            questState.hasNewQuests = false;
+        }
+    }
+
+    // 퀘스트 팝업 배경
+    let questPopup = null;
+    let questPopupContent = null;
+    let questCloseButton = null; // 퀘스트 팝업 전용 X버튼 변수
+
+    // 퀘스트 아이콘 클릭 이벤트
+    questIcon.onClick(() => {
+        console.log("[DEBUG] 퀘스트 아이콘 클릭됨");
+        if (questState.isPopupOpen) {
+            closeQuestPopup();
+        } else {
+            openQuestPopup();
+        }
+    });
+
+    // 퀘스트 아이콘 호버 효과
+    questIcon.onHover(() => {
+        questIcon.scale = k.vec2(2.2, 2.2);
+    });
+
+    questIcon.onHoverEnd(() => {
+        questIcon.scale = k.vec2(2, 2);
+    });
+    
+    // 설정 상태 관리
+    const settingsState = {
+        isPopupOpen: false,
+    };
+    
+    let settingsPopup = null;
+    let settingsCloseButton = null; // 설정 팝업 전용 X버튼 변수
+    
+    // 설정 아이콘 클릭 이벤트
+    settingsIcon.onClick(() => {
+        console.log("[DEBUG] 설정 아이콘 클릭됨");
+        if (settingsState.isPopupOpen) {
+            closeSettingsPopup();
+        } else {
+            openSettingsPopup();
+        }
+    });
+
+    // 설정 아이콘 호버 효과
+    settingsIcon.onHover(() => {
+        settingsIcon.scale = k.vec2(2.2, 2.2);
+    });
+
+    settingsIcon.onHoverEnd(() => {
+        settingsIcon.scale = k.vec2(2, 2);
+    });
+
+    // 퀘스트 팝업 열기
+    function openQuestPopup() {
+        if (questState.isPopupOpen) return;
+
+        questState.isPopupOpen = true;
+
+        // 퀘스트 창 개선된 디자인 적용
+        const panelWidth = k.width() * 0.8;
+        const panelHeight = k.height() * 0.7;
+        const panelX = k.width() * 0.1;
+        const panelY = k.height() * 0.15;
+        
+        // 파스텔 블루 테마로 패널 생성 - 헤더 높이 절반으로
+        const panel = createPanelWithHeader(k, {
+            x: panelX,
+            y: panelY,
+            width: panelWidth,
+            height: panelHeight,
+            headerHeight: 30, // 기본 60에서 30으로 절반
+            colors: UI_THEMES.PASTEL_BLUE,
+            zIndex: 150,
+            tag: "quest-popup",
+            fixed: true
+        });
+
+        questPopup = panel.mainBg; // 호환성을 위해 유지
+
+        // 팝업 제목 (헤더 영역에 배치) - 크기 증가
+        const title = k.add([
+            k.text("오늘의 할일", {
+                size: 20, // 16에서 20으로 증가
+                font: "galmuri",
+            }),
+            k.pos(panel.headerArea.x + 8, panel.headerArea.y + panel.headerArea.height / 2), // 여백 조정
+            k.color(80, 80, 80), // 파스텔 테마에 맞는 진한 회색
+            k.anchor("left"),
+            k.z(152),
+            k.fixed(),
+            "quest-popup-element",
+        ]);
+
+        // X 버튼 생성 (퀘스트 팝업용)
+        questCloseButton = createCloseButton(k, {
+            x: panel.headerArea.x + panel.headerArea.width - 30,
+            y: panel.headerArea.y + 3,
+            size: 24, // 18에서 24로 증가
+            colors: {
+                bg: [120, 140, 180],
+                bgHover: [140, 160, 200],
+                border: [100, 120, 160],
+                text: [255, 255, 255]
+            },
+            zIndex: 162,
+            tag: "quest-popup-element",
+            fixed: true,
+            onClick: () => {
+                console.log("[DEBUG] 퀘스트 X 버튼 클릭됨");
+                closeQuestPopup();
+            }
+        });
+
+        // 퀘스트 항목들을 체크박스 형태로 렌더링
+        const questItemElements = [];
+        const currentQuestItems = window.questItems || questItems;
+        currentQuestItems.forEach((item, index) => {
+            const yPos = panel.contentArea.y + 30 + (index * 50); // 첫 번째 퀘스트와 제목 간격 +30px 추가
+            
+            // 체크박스
+            const checkbox = k.add([
+                k.rect(16, 16),
+                k.pos(panel.contentArea.x, yPos),
+                k.color(item.completed ? [126, 155, 204] : [200, 200, 200]), // 완료시 파스텔 블루
+                k.outline(2, k.rgb(80, 80, 80)),
+                k.z(152),
+                k.fixed(),
+                "quest-popup-element",
+            ]);
+            
+            // 체크 표시 (완료된 경우)
+            if (item.completed) {
+                const checkMark = k.add([
+                    k.text("✓", {
+                        size: 14, // 12에서 14로 증가
+                font: "galmuri",
+            }),
+                    k.pos(panel.contentArea.x + 8, yPos + 8),
+            k.color(255, 255, 255),
+                    k.anchor("center"),
+                    k.z(153),
+            k.fixed(),
+                    "quest-popup-element",
+                ]);
+            }
+            
+            // 퀘스트 제목 (완료시 취소선)
+            const questTitle = k.add([
+                k.text(item.title, {
+                    size: 18, // 16에서 18로 증가
+                font: "galmuri",
+                }),
+                k.pos(panel.contentArea.x + 24, yPos + 8),
+                k.color(item.completed ? [150, 150, 150] : [80, 80, 80]), // 완료시 회색
+                k.anchor("left"),
+                k.z(152),
+            k.fixed(),
+                "quest-popup-element",
+            ]);
+            
+            // 완료된 퀘스트에 취소선 추가
+            if (item.completed) {
+                const strikethrough = k.add([
+                    k.rect(questTitle.width, 2),
+                    k.pos(panel.contentArea.x + 24, yPos + 8 + 9), // 텍스트 중앙에
+                    k.color(150, 150, 150),
+                    k.z(153),
+            k.fixed(),
+                    "quest-popup-element",
+                ]);
+            }
+            
+            // 세부 항목들 (확장시)
+            if (item.expanded) {
+                item.details.forEach((detail, detailIndex) => {
+                    const detailY = yPos + 25 + (detailIndex * 18);
+                    const detailText = k.add([
+                        k.text(`  • ${detail}`, {
+                            size: 16, // 14에서 16으로 증가
+                font: "galmuri",
+            }),
+                        k.pos(panel.contentArea.x + 32, detailY),
+                        k.color(item.completed ? [150, 150, 150] : [100, 100, 100]),
+                        k.anchor("left"),
+            k.z(152),
+            k.fixed(),
+                        "quest-popup-element",
+                    ]);
+                });
+            }
+            
+            questItemElements.push({ checkbox, questTitle, item, index });
+        });
+
+        // 체크박스 클릭 이벤트 (완료 상태 토글)
+        questItemElements.forEach((element, index) => {
+            const yPos = panel.contentArea.y + 30 + (index * 50); // 간격 조정과 동일하게
+            
+            // 체크박스 클릭 영역
+            const checkboxClickArea = k.add([
+                k.rect(20, 20),
+                k.pos(panel.contentArea.x - 2, yPos - 2),
+                k.area(),
+                k.opacity(0),
+                k.z(154),
+                k.fixed(),
+                "quest-checkbox-clickable",
+                "quest-popup-element",
+            ]);
+            
+            // 제목 클릭 영역 (확장/축소)
+            const titleClickArea = k.add([
+                k.rect(panel.contentArea.width - 30, 20),
+                k.pos(panel.contentArea.x + 24, yPos - 2),
+                k.area(),
+                k.opacity(0.05),
+                k.color(126, 155, 204),
+                k.z(153),
+                k.fixed(),
+                "quest-title-clickable",
+                "quest-popup-element",
+            ]);
+            
+            // 체크박스 클릭 (완료 상태 토글)
+            checkboxClickArea.onClick(() => {
+                console.log(`[DEBUG] 퀘스트 ${index} 완료 상태 토글`);
+                const currentQuestItems = window.questItems || questItems;
+                currentQuestItems[index].completed = !currentQuestItems[index].completed;
+                k.play("confirm-beep-sfx", { volume: 0.4 });
+                
+                // 체크박스 색상 즉시 업데이트
+                element.checkbox.color = currentQuestItems[index].completed ? 
+                    k.rgb(120, 220, 120) : k.rgb(255, 255, 255);
+                    
+                // 퀘스트 아이콘 상태 업데이트
+                updateQuestIcon();
+            });
+            
+            // 제목 클릭 (확장/축소) - 효과음 제거됨
+            titleClickArea.onClick(() => {
+                console.log(`[DEBUG] 퀘스트 ${index} 제목 클릭 - 확장/축소 기능은 아직 미구현`);
+                // 확장/축소 기능은 나중에 구현 예정
+                // const currentQuestItems = window.questItems || questItems;
+                // currentQuestItems[index].expanded = !currentQuestItems[index].expanded;
+            });
+            
+            // 호버 효과
+            titleClickArea.onHover(() => {
+                titleClickArea.opacity = 0.1;
+            });
+            
+            titleClickArea.onHoverEnd(() => {
+                titleClickArea.opacity = 0.05;
+            });
+        });
+        
+        // 퀘스트 팝업 새로고침 함수 제거됨 (무한루프 방지)
+
+        // 각 팝업별로 독립적인 X 버튼 사용 (questCloseButton, settingsCloseButton)
+
+        // 퀘스트 아이콘 상태 업데이트 (퀘스트 유무에 따라)
+        updateQuestIcon();
+    }
+
+    // 퀘스트 팝업 닫기
+    function closeQuestPopup() {
+        if (!questState.isPopupOpen) return;
+
+        console.log("[DEBUG] 퀘스트 팝업 닫기 시작");
+        questState.isPopupOpen = false;
+
+        // 퀘스트 팝업 관련 모든 요소 제거 - 강화된 로직
+        try {
+            // X 버튼 먼저 정리
+            if (questCloseButton && questCloseButton.destroy) {
+                console.log("[DEBUG] 퀘스트 X 버튼 정리 중");
+                questCloseButton.destroy();
+            }
+            if (questCloseButton && questCloseButton.elements) {
+                questCloseButton.elements.forEach(element => {
+                    if (element.exists && element.exists()) {
+                        element.destroy();
+                    }
+                });
+            }
+            questCloseButton = null;
+            
+            // 태그별로 모든 요소 제거
+            const questElements = k.get("quest-popup-element");
+            console.log(`[DEBUG] 퀘스트 요소 ${questElements.length}개 제거 중`);
+            questElements.forEach(obj => {
+                if (obj.exists()) {
+                    obj.destroy();
+                }
+            });
+        
+            // 추가 태그들도 정리
+            k.destroyAll("quest-checkbox-clickable");
+            k.destroyAll("quest-title-clickable");
+            k.destroyAll("quest-popup");
+            k.destroyAll("quest-checkmark");
+            k.destroyAll("quest-strikethrough");
+            
+            console.log("[DEBUG] 퀘스트 팝업 요소 정리 완료");
+        } catch (error) {
+            console.warn("[DEBUG] 퀘스트 팝업 정리 중 오류:", error);
+        }
+        
+        // 변수들 null로 설정
+        questPopup = null;
+            questPopupContent = null;
+        questCloseButton = null;
+    }
+
+    // 퀘스트 팝업 UI 실시간 새로고침 함수
+    function refreshQuestPopupUI() {
+        console.log("[DEBUG] 퀘스트 팝업 UI 새로고침");
+        
+        // 현재 열려있는 퀘스트 팝업의 체크박스들을 업데이트
+        questItems.forEach((item, index) => {
+            // 체크박스 색상 업데이트
+            const checkboxes = k.get("quest-checkbox-clickable");
+            if (checkboxes[index]) {
+                checkboxes[index].color = item.completed ? 
+                    k.rgb(126, 155, 204) : k.rgb(200, 200, 200);
+            }
+            
+            // 체크 마크 업데이트 (완료된 경우 추가, 미완료시 제거)
+            const checkMarks = k.get("quest-checkmark");
+            checkMarks.forEach(mark => {
+                if (mark.questIndex === index) {
+                    mark.destroy();
+                }
+            });
+            
+            if (item.completed) {
+                const yPos = k.get("quest-popup")[0].pos.y + 100 + (index * 50);
+                k.add([
+                    k.text("✓", {
+                        size: 14,
+                        font: "galmuri",
+                    }),
+                    k.pos(k.get("quest-popup")[0].pos.x + 8, yPos + 8),
+                    k.color(255, 255, 255),
+                    k.anchor("center"),
+                    k.z(153),
+                    k.fixed(),
+                    "quest-popup-element",
+                    "quest-checkmark",
+                    { questIndex: index }
+                ]);
+            }
+            
+            // 취소선 업데이트
+            const strikethroughs = k.get("quest-strikethrough");
+            strikethroughs.forEach(strike => {
+                if (strike.questIndex === index) {
+                    strike.destroy();
+                }
+            });
+            
+            if (item.completed) {
+                const questTitleElements = k.get("quest-title-text");
+                const questTitle = questTitleElements[index];
+                if (questTitle) {
+                    k.add([
+                        k.rect(questTitle.width, 2),
+                        k.pos(questTitle.pos.x, questTitle.pos.y + 9),
+                        k.color(150, 150, 150),
+                        k.z(153),
+                        k.fixed(),
+                        "quest-popup-element",
+                        "quest-strikethrough",
+                        { questIndex: index }
+                    ]);
+                }
+            }
+        });
+    }
+
+    // 설정 팝업 열기
+    function openSettingsPopup() {
+        if (settingsState.isPopupOpen) return;
+
+        console.log("[DEBUG] 설정 팝업 열기 시작");
+        
+        // 기존 설정 팝업 요소들 정리 (중복 방지) - 더욱 강화된 로직
+        try {
+            // 이전 X 버튼 완전 정리
+            if (settingsCloseButton) {
+                console.log("[DEBUG] 이전 설정 X 버튼 정리 중");
+                
+                if (settingsCloseButton.destroy) {
+                    settingsCloseButton.destroy();
+                }
+                if (settingsCloseButton.elements && Array.isArray(settingsCloseButton.elements)) {
+                    settingsCloseButton.elements.forEach(element => {
+                        if (element && element.exists && element.exists()) {
+                            element.destroy();
+                        }
+                    });
+                }
+                
+                // 개별 요소들도 정리
+                if (settingsCloseButton.bg && settingsCloseButton.bg.exists()) {
+                    settingsCloseButton.bg.destroy();
+                }
+                if (settingsCloseButton.clickArea && settingsCloseButton.clickArea.exists()) {
+                    settingsCloseButton.clickArea.destroy();
+                }
+                if (settingsCloseButton.buttonText && settingsCloseButton.buttonText.exists()) {
+                    settingsCloseButton.buttonText.destroy();
+                }
+                
+                settingsCloseButton = null;
+            }
+            
+            // 기존 설정 요소들 완전 정리
+            k.destroyAll("settings-popup-element");
+            k.destroyAll("settings-popup");
+            k.destroyAll("close-button"); // X버튼 태그도 정리
+            
+            console.log("[DEBUG] 이전 설정 요소들 정리 완료");
+        } catch (error) {
+            console.warn("[DEBUG] 설정 요소 정리 중 오류:", error);
+        }
+
+        settingsState.isPopupOpen = true;
+
+        const panelWidth = k.width() * 0.7;
+        const panelHeight = k.height() * 0.6;
+        const panelX = (k.width() - panelWidth) / 2;
+        const panelY = (k.height() - panelHeight) / 2;
+
+        // 설정 패널 생성 (파스텔 퍼플 테마) - 헤더 높이 절반으로
+        const panel = createPanelWithHeader(k, {
+            x: panelX,
+            y: panelY,
+            width: panelWidth,
+            height: panelHeight,
+            headerHeight: 30, // 기본 60에서 30으로 절반
+            colors: UI_THEMES.PASTEL_PURPLE,
+            zIndex: 160, // 퀘스트보다 위에
+            tag: "settings-popup",
+            fixed: true
+        });
+
+        settingsPopup = panel.mainBg;
+
+        // 설정 제목 - 크기 증가
+        const title = k.add([
+            k.text("게임 설정", {
+                size: 20, // 16에서 20으로 증가
+                font: "galmuri",
+            }),
+            k.pos(panel.headerArea.x + 8, panel.headerArea.y + panel.headerArea.height / 2), // 여백도 조정
+            k.color(80, 80, 80),
+            k.anchor("left"),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        // X 버튼 생성 (설정 팝업용)
+        settingsCloseButton = createCloseButton(k, {
+            x: panel.headerArea.x + panel.headerArea.width - 30,
+            y: panel.headerArea.y + 3,
+            size: 24, // 18에서 24로 증가
+            colors: {
+                bg: [75, 0, 130],        // 짙은 보라색
+                bgHover: [95, 20, 150],  // 호버시 밝은 보라색
+                border: [50, 0, 100],    // 더 짙은 보라색 테두리
+                text: [255, 255, 255]    // 흰색 텍스트
+            },
+            zIndex: 172,
+            tag: "settings-popup-element",
+            onClick: () => {
+                console.log("[DEBUG] 설정 X 버튼 클릭됨");
+                closeSettingsPopup();
+            }
+        });
+
+        // 설정 항목들
+        const settingY = panel.contentArea.y + 20;
+        const itemSpacing = 50; // 간격을 줄여 더 많은 항목 배치
+
+        // 음소거 설정
+        const muteLabel = k.add([
+            k.text("음소거", {
+                size: 20, // 18에서 20으로 증가
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + 20, settingY),
+            k.color(80, 80, 80),
+            k.anchor("left"),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const muteToggle = k.add([
+            k.rect(60, 30),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 80, settingY - 5),
+            k.color(gameState.getIsMuted() ? [200, 100, 100] : [100, 200, 100]),
+            k.area(),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const muteText = k.add([
+            k.text(gameState.getIsMuted() ? "OFF" : "ON", {
+                size: 14,
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 50, settingY + 10),
+            k.color(255, 255, 255),
+            k.anchor("center"),
+            k.z(163),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        muteToggle.onClick(() => {
+            const newMuted = !gameState.getIsMuted();
+            gameState.setIsMuted(newMuted);
+            
+            // 실제 오디오 볼륨 조절
+            if (newMuted) {
+                k.volume(0); // 음소거
+            } else {
+                k.volume(gameState.getBgmVolume() || 1.0); // 이전 볼륨으로 복원
+            }
+            
+            muteToggle.color = newMuted ? k.rgb(200, 100, 100) : k.rgb(100, 200, 100);
+            muteText.text = newMuted ? "OFF" : "ON";
+            
+            // 음소거가 아닐 때만 효과음 재생
+            if (!newMuted) {
+                k.play("boop-sfx", { volume: 0.3 });
+            }
+            
+            console.log(`[DEBUG] 음소거 상태 변경: ${newMuted ? "ON" : "OFF"}`);
+        });
+
+        // 언어 설정
+        const langLabel = k.add([
+            k.text("언어", {
+                size: 20, // 18에서 20으로 증가
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + 20, settingY + itemSpacing),
+            k.color(80, 80, 80),
+            k.anchor("left"),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const langToggle = k.add([
+            k.rect(80, 30),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 100, settingY + itemSpacing - 5),
+            k.color(175, 126, 204), // 파스텔 퍼플
+            k.area(),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const langText = k.add([
+            k.text(gameState.getLocale() === "korean" ? "한국어" : "English", {
+                size: 14,
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 60, settingY + itemSpacing + 10),
+            k.color(255, 255, 255),
+            k.anchor("center"),
+            k.z(163),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        langToggle.onClick(() => {
+            const currentLocale = gameState.getLocale();
+            const newLocale = currentLocale === "korean" ? "english" : "korean";
+            
+            console.log(`[DEBUG] 언어 변경: ${currentLocale} -> ${newLocale}`);
+            gameState.setLocale(newLocale);
+            langText.text = newLocale === "korean" ? "한국어" : "English";
+            
+            // 언어 변경 시 설정창의 텍스트들도 업데이트
+            title.text = newLocale === "korean" ? "게임 설정" : "Game Settings";
+            muteLabel.text = newLocale === "korean" ? "음소거" : "Mute";
+            langLabel.text = newLocale === "korean" ? "언어" : "Language";
+            volumeLabel.text = newLocale === "korean" ? "볼륨" : "Volume";
+            mainMenuText.text = newLocale === "korean" ? "메인화면으로" : "Main Menu";
+            creditText.text = newLocale === "korean" ? "크레딧" : "Credits";
+            
+            if (!gameState.getIsMuted()) {
+                k.play("boop-sfx", { volume: 0.3 });
+            }
+        });
+
+        // 볼륨 조절 설정
+        const volumeLabel = k.add([
+            k.text("볼륨", {
+                size: 20, // 18에서 20으로 증가
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + 20, settingY + itemSpacing * 2),
+            k.color(80, 80, 80),
+            k.anchor("left"),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        // 볼륨 슬라이더 배경
+        const volumeSliderBg = k.add([
+            k.rect(120, 12),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 140, settingY + itemSpacing * 2 + 4),
+            k.color(200, 200, 200),
+            k.outline(2, k.rgb(120, 120, 120)),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        // 볼륨 슬라이더 바
+        const currentVolume = gameState.getBgmVolume() || 1.0;
+        const volumeSliderBar = k.add([
+            k.rect(120 * currentVolume, 12),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 140, settingY + itemSpacing * 2 + 4),
+            k.color(175, 126, 204),
+            k.z(163),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        // 볼륨 텍스트
+        const volumeText = k.add([
+            k.text(`${Math.round(currentVolume * 100)}%`, {
+                size: 14,
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 80, settingY + itemSpacing * 2 + 10),
+            k.color(80, 80, 80),
+            k.anchor("center"),
+            k.z(164),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        // 볼륨 조절 클릭 영역
+        const volumeClickArea = k.add([
+            k.rect(120, 24),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 140, settingY + itemSpacing * 2 - 6),
+            k.area(),
+            k.opacity(0),
+            k.z(164),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        volumeClickArea.onClick(() => {
+            const mouseX = k.mousePos().x;
+            const clickX = mouseX - volumeClickArea.pos.x;
+            const newVolume = Math.max(0, Math.min(1, clickX / 120));
+            
+            gameState.setBgmVolume(newVolume);
+            if (!gameState.getIsMuted()) {
+                k.volume(newVolume);
+            }
+            
+            volumeSliderBar.width = 120 * newVolume;
+            volumeText.text = `${Math.round(newVolume * 100)}%`;
+            
+            console.log(`[DEBUG] 볼륨 변경: ${Math.round(newVolume * 100)}%`);
+            
+            if (!gameState.getIsMuted()) {
+                k.play("boop-sfx", { volume: newVolume * 0.3 });
+            }
+        });
+
+        // 메인화면으로 나가기 버튼 (우측 하단에 배치)
+        const mainMenuButton = k.add([
+            k.rect(120, 35),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 250, panel.contentArea.y + panel.contentArea.height - 60), // 우측 하단에 배치 (20px 패딩)
+            k.color(255, 180, 180),
+            k.outline(2, k.rgb(220, 120, 120)),
+            k.area(),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const mainMenuText = k.add([
+            k.text("메인화면으로", {
+                size: 16, // 크기 조정
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 190, panel.contentArea.y + panel.contentArea.height - 42), // 버튼 중앙에 배치
+            k.color(120, 60, 60),
+            k.anchor("center"),
+            k.z(163),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        mainMenuButton.onClick(() => {
+            console.log("[DEBUG] 메인화면으로 이동");
+            if (!gameState.getIsMuted()) {
+                k.play("boop-sfx", { volume: 0.5 });
+            }
+            closeSettingsPopup();
+            k.go("title");
+        });
+
+        mainMenuButton.onHover(() => {
+            mainMenuButton.color = k.rgb(255, 200, 200);
+        });
+
+        mainMenuButton.onHoverEnd(() => {
+            mainMenuButton.color = k.rgb(255, 180, 180);
+        });
+
+        // 크레딧 버튼 (우측 하단에 배치)
+        const creditButton = k.add([
+            k.rect(120, 35),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 120, panel.contentArea.y + panel.contentArea.height - 60), // 메인메뉴 버튼 옆에 배치
+            k.color(180, 255, 180),
+            k.outline(2, k.rgb(120, 220, 120)),
+            k.area(),
+            k.z(162),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        const creditText = k.add([
+            k.text("크레딧", {
+                size: 16, // 크기 조정
+                font: "galmuri",
+            }),
+            k.pos(panel.contentArea.x + panel.contentArea.width - 60, panel.contentArea.y + panel.contentArea.height - 42), // 버튼 중앙에 배치
+            k.color(60, 120, 60),
+            k.anchor("center"),
+            k.z(163),
+            k.fixed(),
+            "settings-popup-element",
+        ]);
+
+        creditButton.onClick(() => {
+            console.log("[DEBUG] 크레딧으로 이동");
+            if (!gameState.getIsMuted()) {
+                k.play("boop-sfx", { volume: 0.5 });
+            }
+            gameState.setPreviousScene("front"); // 이전 씬을 front로 설정
+            closeSettingsPopup();
+            k.go("credits");
+        });
+
+        creditButton.onHover(() => {
+            creditButton.color = k.rgb(200, 255, 200);
+        });
+
+        creditButton.onHoverEnd(() => {
+            creditButton.color = k.rgb(180, 255, 180);
+        });
+        
+        // X 버튼은 이미 위에서 생성되었으므로 여기서는 제거함
+    }
+    
+    // 설정 팝업 닫기
+    function closeSettingsPopup() {
+        if (!settingsState.isPopupOpen) return;
+
+        console.log("[DEBUG] 설정 팝업 닫기 시작");
+        settingsState.isPopupOpen = false;
+
+        // 설정 팝업 관련 모든 요소 제거 - 더욱 강화된 로직
+        try {
+            // X 버튼 먼저 정리 - 모든 가능한 방법으로
+            if (settingsCloseButton) {
+                console.log("[DEBUG] 설정 X 버튼 정리 중");
+                
+                // destroy 메서드가 있으면 사용
+                if (settingsCloseButton.destroy) {
+                    settingsCloseButton.destroy();
+                }
+                
+                // elements 배열이 있으면 개별 정리
+                if (settingsCloseButton.elements && Array.isArray(settingsCloseButton.elements)) {
+                    settingsCloseButton.elements.forEach(element => {
+                        if (element && element.exists && element.exists()) {
+                            element.destroy();
+                        }
+                    });
+                }
+                
+                // 개별 요소들도 정리
+                if (settingsCloseButton.bg && settingsCloseButton.bg.exists()) {
+                    settingsCloseButton.bg.destroy();
+                }
+                if (settingsCloseButton.clickArea && settingsCloseButton.clickArea.exists()) {
+                    settingsCloseButton.clickArea.destroy();
+                }
+                if (settingsCloseButton.buttonText && settingsCloseButton.buttonText.exists()) {
+                    settingsCloseButton.buttonText.destroy();
+                }
+                
+                settingsCloseButton = null;
+            }
+            
+            // 태그별로 모든 요소 제거 - 다중 태그 정리
+            const settingsElements = k.get("settings-popup-element");
+            console.log(`[DEBUG] 설정 요소 ${settingsElements.length}개 제거 중`);
+            settingsElements.forEach(obj => {
+                if (obj && obj.exists && obj.exists()) {
+                    obj.destroy();
+                }
+            });
+            
+            // 추가 태그들도 정리
+            k.destroyAll("settings-popup");
+            k.destroyAll("settings-popup-element");
+            k.destroyAll("close-button"); // X버튼 태그도 정리
+            
+            console.log("[DEBUG] 설정 팝업 요소 정리 완료");
+        } catch (error) {
+            console.warn("[DEBUG] 설정 팝업 정리 중 오류:", error);
+        }
+        
+        // 변수 null로 설정
+        settingsPopup = null;
+        settingsCloseButton = null;
+    }
+
+    // ESC 키로 팝업 닫기 + 모든 팝업 요소 강제 정리
+    k.onKeyPress("escape", () => {
+        console.log("[DEBUG] ESC 키 눌림 - 팝업 정리");
+        
+        if (settingsState.isPopupOpen) {
+            closeSettingsPopup();
+        } else if (questState.isPopupOpen) {
+            closeQuestPopup();
+        }
+        
+        // 추가 안전장치: 혹시 남아있는 팝업 요소들 강제 정리
+        k.wait(0.1, () => {
+            try {
+                k.destroyAll("quest-popup-element");
+                k.destroyAll("settings-popup-element");
+                k.destroyAll("quest-checkbox-clickable");
+                k.destroyAll("quest-title-clickable");
+                console.log("[DEBUG] 팝업 요소 강제 정리 완료");
+            } catch (error) {
+                console.warn("[DEBUG] 팝업 강제 정리 중 오류:", error);
+            }
+        });
+    });
+
+    // 화면 크기 변경 시 아이콘 위치 업데이트
+    k.onResize(() => {
+        questIcon.pos = k.vec2(k.width() - 120, 20);
+        settingsIcon.pos = k.vec2(k.width() - 60, 20);
+    });
+
+    // 초기 퀘스트 아이콘 상태 설정
+    k.wait(0.1, () => {
+        // 약간의 지연 후 아이콘 상태 업데이트 (퀘스트 항목이 초기화된 후)
+        const currentQuestItems = window.questItems || questItems;
+        if (currentQuestItems && currentQuestItems.length > 0) {
+            updateQuestIcon();
+        }
+    });
+
+    // 퀘스트 완료 알림 함수
+    function showQuestCompletionMessage(questTitle) {
+        console.log(`[DEBUG] 퀘스트 완료: ${questTitle}`);
+        
+        // 완료 메시지 배경
+        const messageBg = k.add([
+            k.rect(600, 120),
+            k.pos(k.width() / 2, 80), // 퀘스트 아이콘과 평행한 높이
+            k.anchor("center"),
+            k.color(180, 150, 210), // 연보라색 배경
+            k.outline(4, k.rgb(80, 160, 80)),
+            k.z(200),
+            k.fixed(),
+            "quest-completion-message",
+        ]);
+
+        // 완료 메시지 텍스트
+        const messageText = k.add([
+            k.text(`"${questTitle}"\n을 완료했습니다!`, {
+                size: 20,
+                font: "galmuri",
+                align: "center",
+            }),
+            k.pos(k.width() / 2, 80),
+            k.anchor("center"),
+            k.color(255, 255, 255),
+            k.z(201),
+            k.fixed(),
+            "quest-completion-message",
+        ]);
+
+        // 효과음 재생
+        k.play("coin-sfx", { volume: 0.6 });
+
+        // 3초 후 메시지 제거
+        k.wait(3, () => {
+            k.destroyAll("quest-completion-message");
+        });
+    }
+
+    // 퀘스트 완료 확인 함수
+    function completeQuestByNpc(npcType) {
+        console.log(`[DEBUG] NPC ${npcType}와 대화 - 퀘스트 완료 확인`);
+        console.log(`[DEBUG] 현재 questItems:`, window.questItems || questItems);
+        
+        // 전역 questItems 참조 (window 객체를 통해 접근)
+        const currentQuestItems = window.questItems || questItems;
+        if (!currentQuestItems) {
+            console.error("[DEBUG] questItems이 정의되지 않음");
+            return false;
+        }
+        
+        // 해당 NPC를 타겟으로 하는 미완료 퀘스트 찾기
+        for (let i = 0; i < currentQuestItems.length; i++) {
+            const quest = currentQuestItems[i];
+            if (quest.targetNpc === npcType && !quest.completed) {
+                console.log(`[DEBUG] 퀘스트 "${quest.title}" 완료!`);
+                quest.completed = true;
+                
+                // 완료 메시지 표시
+                showQuestCompletionMessage(quest.title);
+                
+                // 퀘스트 아이콘 상태 업데이트
+                updateQuestIcon();
+                
+                // 퀘스트 팝업이 열려있다면 체크박스 색상 업데이트
+                if (questState.isPopupOpen) {
+                    const checkboxes = k.get("quest-popup-element").filter(obj => 
+                        obj.is && obj.is("rect") && obj.width === 16
+                    );
+                    if (checkboxes[i]) {
+                        checkboxes[i].color = k.rgb(120, 220, 120);
+                    }
+                }
+                
+                return true; // 퀘스트 완료됨
+            }
+        }
+        return false; // 완료된 퀘스트 없음
+    }
+
+    // 새로운 퀘스트 추가 함수 (나중에 사용할 수 있도록)
+    return {
+        addNewQuest: () => {
+            questState.hasNewQuests = true;
+            questIcon.frame = 5771; // 열린편지
+        },
+        markQuestsAsRead: () => {
+            questState.hasNewQuests = false;
+            questIcon.frame = 5770; // 닫힌편지
+        },
+        updateQuestIcon: updateQuestIcon, // 외부에서 호출 가능하도록
+    };
+
+    // 전역 함수로 노출
+    window.updateQuestIcon = updateQuestIcon;
+    window.showQuestCompletionMessage = showQuestCompletionMessage;
+    window.showQuestAddedMessage = showQuestAddedMessage;
+}
+
+export default async function front(k) {
+    console.log("🏠 Front 씬 시작");
+    
+    // 게임 데이터 자동 초기화 (플레이어 이름 로드 등)
+    const gameData = initializeGameData("front");
+    console.log("🎮 Front 씬 게임 데이터:", gameData);
+    
+    // 저장된 퀘스트 데이터 로드 시도
+    const playerName = gameState.playerName;
+    let savedQuestData = null;
+    
+    if (playerName && playerName.trim() !== "" && playerName !== "플레이어") {
+        const existingSaves = gameDataManager.getSaveList();
+        const playerSave = existingSaves.find(save => save.playerName === playerName);
+        
+        if (playerSave && playerSave.questState && playerSave.questState.questItems) {
+            savedQuestData = playerSave.questState.questItems;
+            console.log("🎯 저장된 퀘스트 데이터 발견:", savedQuestData);
+        }
+    }
+    
+    // 퀘스트 항목들 초기화 - 항상 기본 퀘스트 1, 2로 시작
+    console.log("✨ 기본 퀘스트 데이터로 초기화");
+    questItems = [
+        {
+            title: "[Q01] 골대 근처 계단에 앉은 친구에게 말걸기",
+            details: ["운동장 골대 근처에서 계단에 앉아있는 학생 찾기", "그 학생과 대화해보기"],
+            expanded: false,
+            completed: false,
+            targetNpc: "student1" // 완료 조건 추가
+        },
+        {
+            title: "[Q02] 운동장 피구공 뻥 차보기",
+            details: ["운동장에 있는 피구공 찾기", "공에 다가가서 차보기"],
+            expanded: false,
+            completed: false,
+            targetObject: "ball" // 완료 조건 추가
+        }
+        // 퀘스트 3은 퀘스트 1 완료 시 추가됨
+    ];
+    
+    // 저장된 퀘스트 데이터가 있다면 완료 상태만 복원
+    if (savedQuestData && savedQuestData.length > 0) {
+        console.log("🔄 저장된 퀘스트 완료 상태 복원:", savedQuestData);
+        
+        // 퀘스트 1 완료 상태 복원
+        if (savedQuestData[0] && savedQuestData[0].completed) {
+            questItems[0].completed = true;
+            
+            // 퀘스트 1이 완료되었다면 퀘스트 3 추가
+            if (!questItems.some(quest => quest.targetNpc === "student4")) {
+                questItems.push({
+                    title: "[Q03] 운동장에서 개미 관찰하는 친구 찾고 말걸기",
+                    details: ["운동장을 둘러보며 개미를 관찰하는 학생 찾기", "그 학생과 대화해보기"],
+                    expanded: false,
+                    completed: false,
+                    targetNpc: "student4"
+                });
+            }
+        }
+        
+        // 퀘스트 2 완료 상태 복원
+        if (savedQuestData.length > 1 && savedQuestData[1] && savedQuestData[1].completed) {
+            questItems[1].completed = true;
+        }
+        
+        // 퀘스트 3이 있다면 완료 상태 복원
+        const savedQuest3 = savedQuestData.find(quest => quest.targetNpc === "student4");
+        if (savedQuest3 && questItems.length > 2) {
+            questItems[2].completed = savedQuest3.completed;
+        }
+    }
+    
+    // 전역 접근을 위해 window 객체에도 할당
+    window.questItems = questItems;
+    
+    // 키보드 이벤트 초기화 (이전 씬의 이벤트 리스너 충돌 방지)
+    console.log("🔧 키보드 이벤트 초기화 시작");
+    
+    // window.previousKeyHandler가 있다면 제거
+    if (window.previousKeyHandler) {
+        document.removeEventListener('keydown', window.previousKeyHandler, true);
+        document.removeEventListener('keyup', window.previousKeyHandler, true);
+        window.previousKeyHandler = null;
+        console.log("✅ 이전 키보드 핸들러 제거 완료");
+    }
+    
+    console.log("🔧 키보드 이벤트 초기화 완료");
+
+    // 이전 씬 확인하여 페이드 인 설정
+    const previousScene = gameState.getPreviousScene();
+    console.log(`[DEBUG] Front 씬 시작 - 이전 씬: ${previousScene}`);
+
+    // 배경색을 즉시 검은색으로 설정 (깜빡임 방지)
+    document.body.style.backgroundColor = 'black';
+
+    // 페이드 인 효과 추가
+    const fadeIn = k.add([
+        k.rect(k.width(), k.height()),
+        k.pos(0, 0),
+        k.color(0, 0, 0),
+        k.opacity(1),
+        k.z(1001),
+        k.fixed(),
+    ]);
+    
+    // Tutorial에서 오는 경우 약간의 지연 후 페이드 인 시작
+    const fadeInDuration = (previousScene === "tutorial") ? 1.0 : 1.8;
+    const fadeInDelay = (previousScene === "tutorial") ? 0.3 : 0;
+    
+    k.wait(fadeInDelay, () => {
+        // 페이드 인 애니메이션
+        k.tween(fadeIn.opacity, 0, fadeInDuration, (val) => {
+        fadeIn.opacity = val;
+    }).then(() => {
+        fadeIn.destroy();
+        });
+        console.log(`[DEBUG] Front 페이드인 시작 - 지연: ${fadeInDelay}s, 지속: ${fadeInDuration}s`);
+    });
+    
+    // BGM 재생 (JavaScript 오디오 사용)
+    console.log("🎵 Front BGM 재생 시작");
+    if (!audioManager.isBGMPlaying() || audioManager.getCurrentBGM() !== "rpg-front-bgm") {
+        audioManager.playBGM("rpg-front-bgm", 1.0).then(() => {
+            console.log("🎵 Front BGM 재생 완료");
+        }).catch((error) => {
+            console.error("🎵 Front BGM 재생 실패:", error);
+        });
+    } else {
+        console.log("🎵 Front BGM 이미 재생 중");
+    }
+
+    console.log("🔍 Front 씬 진입 - 이전 씬:", previousScene); // 디버깅용 로그 추가
+
+    // 언어를 한국어로 설정
+    gameState.setLocale("korean");
+
+    // 배경색 제거 - 맵 텍스처가 배경 역할을 함
+    // colorizeBackground(k, 173, 216, 230); // 연한 파란색 배경 (하늘색) - 제거
+    
+    const entities = {
+        player: null,
+        cars: [],
+        objects: [],
+    };
+    
+    // 퀘스트 시스템 초기화 및 전역 접근 변수
+    let questSystem = null;
+    
+    let map;
+    
+    try {
+        const mapData = await fetchMapData("./assets/images/front.json");
+        console.log("🗺️ Front 맵 데이터 로드 완료:", mapData);
+        map = k.add([k.pos(0, 0)]);
+
+        const layers = mapData.layers;
+        console.log("🗺️ 레이어 정보:", layers.map(l => ({ name: l.name, type: l.type, objects: l.objects?.length || 'N/A' })));
+        
+    for (const layer of layers) {
+        if (layer.name === "boundaries") {
+            console.log("🚧 Boundaries 레이어 발견:", layer);
+            console.log("🚧 Layer offset:", layer.offsetx, layer.offsety);
+            // boundaries 레이어에서 특별한 오브젝트들 처리
+            for (const object of layer.objects) {
+                console.log(`🎯 발견된 boundary 오브젝트: ${object.name} at (${object.x}, ${object.y}) size: ${object.width}x${object.height}`);
+                if (
+                    [
+                        "car1",
+                        "car2", // car2 추가
+                        "car3", 
+                        "car4",
+                        "pot", // pot1, pot2를 pot으로 통합
+                        "guryeong",
+                        "sink",
+                        "goal_post1",
+                        "goal_post2",
+                        "line_machine",
+                        "badminton",
+                        "main_entrance",
+                        "front_gate", // front_gate 추가
+                        "ball", // ball 추가
+                        "cat1", // cat1 추가
+                        "cat2", // cat2 추가
+                        "nca", // nca 추가
+                        "badminton", // badminton 추가
+                        "director", // director 추가
+                        "facil", // facil 추가
+                    ].includes(object.name)
+                ) {
+                    const objectType = object.name;
+
+                    // director와 facil의 특별한 처리 (y좌표 조정, 너비 5% 증가)
+                    if (objectType === "director" || objectType === "facil") {
+                        const adjustedWidth = Math.round(object.width * 1.05); // 너비 5% 증가
+                        const adjustedY = object.y + (layer.offsety || 0) - 12; // Y 좌표를 기본 위치로 조정 (10만큼 내림)
+                        
+                        const npcEntity = map.add([
+                            k.rect(adjustedWidth, object.height),
+                            k.area(),
+                            k.body({ isStatic: true }),
+                            k.pos(object.x + (layer.offsetx || 0), adjustedY),
+                            k.opacity(0), // 투명하게 설정
+                            objectType,
+                            "interactive-object",
+                            { objectType },
+                        ]);
+
+                        npcEntity.onCollideUpdate("player", (player) => {
+                            const locale = gameState.getLocale();
+                            const content = frontDialogues[locale]?.[objectType] || [
+                                `Hello! I'm ${objectType}.`,
+                                `안녕하세요! 저는 ${objectType}입니다.`,
+                            ];
+
+                            const speakerName =
+                                frontDialogues.names[locale]?.[objectType] ||
+                                objectType;
+
+                            gameState.setInteractableObject(
+                                npcEntity,
+                                "npc",
+                                {
+                                    content: content,
+                                    speakerName: speakerName,
+                                    speakerImage: null,
+                                }
+                            );
+                        });
+
+                        npcEntity.onCollideEnd("player", () => {
+                            gameState.clearInteractableObject();
+                        });
+
+                        entities.objects.push(npcEntity);
+                        continue;
+                    }
+
+                    // Tiled 좌표계에 맞춰 위치 조정 (24x24 타일 크기 고려, offsety 적용)
+                    const objectEntity = map.add([
+                        k.rect(object.width, object.height),
+                        k.area(),
+                        k.body({ isStatic: true }),
+                        k.pos(object.x + (layer.offsetx || 0), object.y + (layer.offsety || 0) - 12), // Y 위치를 12픽셀 위로 조정
+                        k.opacity(0), // 투명하게 설정
+                        objectType,
+                        "interactive-object",
+                        { objectType },
+                    ]);
+
+                    // main_entrance의 경우 first로 이동
+                    objectEntity.onCollideUpdate("player", (player) => {
+                        if (objectType === "main_entrance") {
+                            console.log("🚪 메인 입구 감지됨!");
+                            k.play("boop-sfx");
+                            gameState.setPreviousScene("front");
+                            k.go("first");
+                            return;
+                        }
+
+                        if (objectType === "front_gate") {
+                            console.log("🚪 정문 감지됨!");
+                            const locale = gameState.getLocale();
+                            const content = frontObjectDialogues[locale]?.["front_gate"] || [
+                                "This is the school's front gate. You can leave the school from here.",
+                                "학교 정문입니다. 여기서 학교를 나갈 수 있습니다.",
+                            ];
+
+                            const speakerName =
+                                objectDialogues.names[locale]?.["front_gate"] ||
+                                "Front Gate";
+
+                            gameState.setInteractableObject(
+                                objectEntity,
+                                "object",
+                                {
+                                    content: content,
+                                    speakerName: speakerName,
+                                    speakerImage: null,
+                                }
+                            );
+                            return;
+                        }
+
+                        // ball (피구공) 처리 - 물리적으로 차일 수 있는 오브젝트
+                        if (objectType === "ball") {
+                            console.log("⚽ 피구공 감지됨!");
+                            
+                            // 기존 objectEntity 제거
+                            objectEntity.destroy();
+                            
+                            // 새로운 ball 엔티티 생성
+                            const ball = map.add([
+                                k.sprite("main-assets", {
+                                    frame: 5296, // main.js에 정의된 ball 스프라이트 인덱스
+                                }),
+                                k.area({
+                                    shape: new k.Rect(k.vec2(0), 24, 24),
+                                }),
+                                k.body({
+                                    isStatic: true,
+                                    mass: 1,
+                                    restitution: 0.6,
+                                }),
+                                k.pos(object.x + (layer.offsetx || 0), object.y + (layer.offsety || 0) - 12), // Y 위치를 12픽셀 위로 조정
+                                k.z(1),
+                                "ball",
+                                "kickable",
+                                {
+                                    objectType: "ball",
+                                    lastKickTime: 0,
+                                    isMoving: false,
+                                },
+                            ]);
+
+                            ball.onCollideUpdate("player", (player) => {
+                                if (!ball.isMoving) {
+                                    kickBallOnCollision(k, ball, player);
+                                }
+                            });
+                            
+                            console.log("⚽ 피구공 스프라이트 생성됨 at:", ball.pos);
+                            return;
+                        }
+
+                        // cat1, cat2 처리
+                        if (objectType === "cat1" || objectType === "cat2") {
+                            console.log(`🐱 ${objectType} 감지됨!`);
+                            
+                            // 기존 objectEntity 제거
+                            objectEntity.destroy();
+                            
+                            // 새로운 cat 엔티티 생성
+                            const cat = map.add([
+                                k.sprite("main-assets", {
+                                    frame: objectType === "cat1" ? 3784 : 3783, // main.js에 정의된 cat 스프라이트 인덱스
+                                }),
+                                k.area(),
+                                k.body({ isStatic: true }),
+                                k.pos(object.x + (layer.offsetx || 0), object.y + (layer.offsety || 0) - 12), // Y 위치를 12픽셀 위로 조정
+                                k.z(1),
+                                objectType,
+                                "interactive-object",
+                                { objectType },
+                            ]);
+
+                            cat.onCollideUpdate("player", (player) => {
+                                const locale = gameState.getLocale();
+                                const content = dialogues[locale]?.[objectType] || [
+                                    "Meow~",
+                                    "야옹~",
+                                ];
+
+                                const speakerName =
+                                    dialogues.names[locale]?.[objectType] ||
+                                    (objectType === "cat1" ? "Cat" : "Another Cat");
+
+                                gameState.setInteractableObject(
+                                    cat,
+                                    "npc",
+                                    {
+                                        content: content,
+                                        speakerName: speakerName,
+                                        speakerImage: null,
+                                    }
+                                );
+                            });
+
+                            cat.onCollideEnd("player", () => {
+                                gameState.clearInteractableObject();
+                            });
+                            
+                            console.log(`🐱 ${objectType} 스프라이트 생성됨 at:`, cat.pos);
+                            return;
+                        }
+
+                        // nca 처리
+                        if (objectType === "nca") {
+                            console.log("📄 NCA 전단지 감지됨!");
+                            
+                            // 기존 objectEntity 제거
+                            objectEntity.destroy();
+                            
+                            // 새로운 nca 엔티티 생성
+                            const nca = map.add([
+                                k.sprite("main-assets", {
+                                    frame: 5386, // main.js에 정의된 nca 스프라이트 번호 사용
+                                }),
+                                k.area(),
+                                k.body({ isStatic: true }),
+                                k.pos(object.x + (layer.offsetx || 0), object.y + (layer.offsety || 0) - 12), // Y 위치를 12픽셀 위로 조정
+                                k.z(1),
+                                objectType,
+                                "interactive-object",
+                                { objectType },
+                            ]);
+
+                            nca.onCollideUpdate("player", (player) => {
+                                const locale = gameState.getLocale();
+                                const content = objectDialogues[locale]?.[objectType] || [
+                                    "NCA recruitment flyer.",
+                                    "NCA 모집 전단지입니다.",
+                                ];
+
+                                const speakerName =
+                                    objectDialogues.names[locale]?.[objectType] ||
+                                    "NCA Flyer";
+
+                                gameState.setInteractableObject(
+                                    nca,
+                                    "object",
+                                    {
+                                        content: content,
+                                        speakerName: speakerName,
+                                        speakerImage: null,
+                                    }
+                                );
+                            });
+
+                            nca.onCollideEnd("player", () => {
+                                gameState.clearInteractableObject();
+                            });
+                            
+                            console.log("📄 NCA 스프라이트 생성됨 at:", nca.pos);
+                            return;
+                        }
+
+                        // 상호작용 가능한 객체로 설정
+                        const locale = gameState.getLocale();
+                        const content = frontObjectDialogues[locale]?.[
+                            objectType
+                        ] || [
+                            `This is ${objectType}`,
+                            `이것은 ${objectType}입니다`,
+                        ];
+
+                        const speakerName =
+                            frontObjectDialogues.names[locale]?.[objectType] ||
+                            objectType;
+
+                        gameState.setInteractableObject(
+                            objectEntity,
+                            "object",
+                            {
+                                content: content,
+                                speakerName: speakerName,
+                                speakerImage: null,
+                            }
+                        );
+                    });
+
+                    objectEntity.onCollideEnd("player", (player) => {
+                        if (objectType !== "main_entrance" && objectType !== "front_gate") {
+                            gameState.clearInteractableObject();
+                        }
+                    });
+
+                    if (objectType.startsWith("car")) {
+                        entities.cars.push(objectEntity);
+                    } else {
+                        entities.objects.push(objectEntity);
+                    }
+                }
+            }
+
+            // drawBoundaries 대신 front.json에 맞는 커스텀 boundary 처리
+            for (const object of layer.objects) {
+                // 이미 처리한 특별한 오브젝트들은 제외
+                if ([
+                    "car1", "car2", "car3", "car4", 
+                    "pot", "guryeong", "sink",
+                    "goal_post1", "goal_post2", "line_machine", 
+                    "badminton", "main_entrance", "front_gate",
+                    "ball", "cat1", "cat2", "nca", "badminton",
+                    "director", "facil"
+                ].includes(object.name)) {
+                    continue;
+                }
+
+                // 일반 경계선 처리 (이름이 없는 벽들)
+                const tag = object.name !== "" ? object.name : object.type || "wall";
+                
+                console.log(`🧱 일반 경계선 생성: ${tag} at (${object.x}, ${object.y}) size: ${object.width}x${object.height}`);
+                
+                const collider = map.add([
+                    k.rect(object.width, object.height),
+                    k.pos(object.x + (layer.offsetx || 0), object.y + (layer.offsety || 0)), // front.json에 맞는 offset 적용
+                    k.area(),
+                    k.body({ isStatic: true }),
+                    k.opacity(0), // 투명하게 설정
+                    tag,
+                ]);
+            }
+            continue;
+        }
+
+        if (layer.name === "spawnpoints") {
+            console.log("🎯 Spawnpoints 레이어 발견:", layer);
+            // spawnpoints 레이어가 있지만 objects가 있는지 확인
+            if (layer.objects && layer.objects.length > 0) {
+                console.log("📍 스폰포인트 오브젝트들:", layer.objects);
+                for (const object of layer.objects) {
+                    console.log(`🎲 발견된 오브젝트: ${object.name} at (${object.x}, ${object.y})`);
+                    
+                    // 플레이어 스폰포인트 처리 - 중복 생성 방지
+                    if (!entities.player) {
+                        // garage에서 돌아온 경우 - player_garage 위치 사용 (우선순위 최고)
+                        if (
+                            object.name === "player_garage" &&
+                            previousScene === "garage"
+                        ) {
+                            console.log("🚗 garage에서 돌아온 플레이어 스폰포인트 사용:", object);
+                            entities.player = map.add(
+                                generateFrontPlayerComponents(k, k.vec2(object.x, object.y))
+                            );
+                            continue;
+                        }
+
+                        // schoolfront에서 돌아온 경우 - player2 위치 사용
+                    if (
+                        object.name === "player2" &&
+                        previousScene === "schoolfront"
+                    ) {
+                        console.log("🚪 학교에서 돌아온 플레이어 스폰포인트 사용:", object);
+                        entities.player = map.add(
+                            generateFrontPlayerComponents(k, k.vec2(object.x, object.y))
+                        );
+                        continue;
+                    }
+
+                    // first에서 돌아온 경우 - player2 위치 사용
+                    if (
+                        object.name === "player2" &&
+                        previousScene === "first"
+                    ) {
+                        console.log("🚪 1층에서 돌아온 플레이어 스폰포인트 사용:", object);
+                        entities.player = map.add(
+                            generateFrontPlayerComponents(k, k.vec2(object.x, object.y))
+                        );
+                        continue;
+                    }
+
+                        // 기본 플레이어 스폰포인트
+                        if (object.name === "player") {
+                            console.log("🎮 기본 플레이어 스폰포인트 발견:", object);
+                        entities.player = map.add(
+                            generateFrontPlayerComponents(k, k.vec2(object.x, object.y))
+                        );
+                        continue;
+                        }
+                    }
+
+                    // NPC들 처리 - director와 facil은 이제 boundaries 레이어에서 처리됨
+                    // if (object.name === "director") {
+                    //     console.log("👨‍🏫 학년부장 선생님 감지됨! (spawnpoints 레이어)");
+                    //     const locale = gameState.getLocale();
+                    //     const content = dialogues[locale]?.["director"] || [
+                    //         "Hello, I'm the grade director.",
+                    //         "안녕하세요, 학년부장입니다.",
+                    //     ];
+
+                    //     const speakerName =
+                    //         dialogues.names[locale]?.["director"] ||
+                    //         "Grade Director";
+
+                    //     const directorEntity = map.add([
+                    //         k.area({
+                    //             shape: new k.Rect(k.vec2(0, 2), 16.8, 42), // 너비 5% 증가 (16 * 1.05 = 16.8)
+                    //         }),
+                    //         k.body({ isStatic: true }),
+                    //         k.pos(object.x - 2, object.y - 20), // Y 좌표를 10만큼 위로 이동
+                    //         k.z(-1), // 캐릭터보다 뒤에 배치 (invisible collision box)
+                    //         "director",
+                    //         "interactive-object",
+                    //         { objectType: "director" },
+                    //     ]);
+
+                    //     directorEntity.onCollideUpdate("player", (player) => {
+                    //         gameState.setInteractableObject(
+                    //             directorEntity,
+                    //             "npc",
+                    //             {
+                    //                 content: content,
+                    //                 speakerName: speakerName,
+                    //                 speakerImage: null,
+                    //             }
+                    //         );
+                    //     });
+
+                    //     directorEntity.onCollideEnd("player", () => {
+                    //         gameState.clearInteractableObject();
+                    //     });
+
+                    //     entities.objects.push(directorEntity);
+                    //     continue;
+                    // }
+
+                    // if (object.name === "facil") {
+                    //     console.log("👨‍💼 교감 선생님 감지됨! (spawnpoints 레이어)");
+                    //     const locale = gameState.getLocale();
+                    //     const content = dialogues[locale]?.["facil"] || [
+                    //         "Hello! I'm the vice principal.",
+                    //         "안녕하세요! 저는 교감입니다.",
+                    //     ];
+
+                    //     const speakerName =
+                    //         dialogues.names[locale]?.["facil"] ||
+                    //         "Vice Principal";
+
+                    //     const facilEntity = map.add([
+                    //         k.area({
+                    //             shape: new k.Rect(k.vec2(0, 2), 16.8, 42), // 너비 5% 증가 (16 * 1.05 = 16.8)
+                    //         }),
+                    //         k.body({ isStatic: true }),
+                    //         k.pos(object.x - 2, object.y - 20), // Y 좌표를 10만큼 위로 이동
+                    //         k.z(-1), // 캐릭터보다 뒤에 배치 (invisible collision box)
+                    //         "facil",
+                    //         "interactive-object",
+                    //         { objectType: "facil" },
+                    //     ]);
+
+                    //     facilEntity.onCollideEnd("player", () => {
+                    //         gameState.clearInteractableObject();
+                    //     });
+
+                    //     entities.objects.push(facilEntity);
+                    //     continue;
+                    // }
+
+                    // NPC들 처리 - director와 facil은 이제 spawnpoints에서 처리
+                    // if (object.name === "director") {
+                    //     const director = map.add([
+                    //         k.sprite("main-assets", {
+                    //             anim: "director",
+                    //         }),
+                    //         k.area(),
+                    //         k.body({ isStatic: true }),
+                    //         k.pos(object.x, object.y),
+                    //         k.z(1),
+                    //         "director",
+                    //         { npcType: "director" },
+                    //     ]);
+
+                    //     director.onCollideUpdate("player", (player) => {
+                    //         const locale = gameState.getLocale();
+                    //         const content = npcDialogues[locale]?.["director"] || [
+                    //             "Hello! I'm the director of this school.",
+                    //             "안녕하세요! 저는 이 학교의 교장입니다.",
+                    //         ];
+
+                    //         const speakerName =
+                    //             npcDialogues.names[locale]?.["director"] ||
+                    //             "Director";
+
+                    //         gameState.setInteractableObject(director, "npc", {
+                    //             content: content,
+                    //             speakerName: speakerName,
+                    //             speakerImage: null,
+                    //         });
+                    //     });
+
+                    //     director.onCollideEnd("player", (player) => {
+                    //         gameState.clearInteractableObject();
+                    //     });
+                    //     continue;
+                    // }
+
+                    // cat1, cat2 처리 (spawnpoints 레이어에서)
+                    if (object.name === "cat1" || object.name === "cat2") {
+                        console.log(`🐱 ${object.name} 감지됨! (spawnpoints 레이어)`);
+                        
+                        const objectType = object.name;
+                        const cat = map.add([
+                            k.sprite("main-assets", {
+                                frame: objectType === "cat1" ? 3784 : 3783, // main.js에 정의된 cat 스프라이트 인덱스
+                            }),
+                            k.area(),
+                            k.body({ isStatic: true }),
+                            k.pos(object.x, object.y),
+                            k.z(1),
+                            objectType,
+                            "interactive-object",
+                            { objectType },
+                        ]);
+
+                        cat.onCollideUpdate("player", (player) => {
+                            const locale = gameState.getLocale();
+                            const content = dialogues[locale]?.[objectType] || [
+                                "Meow~",
+                                "야옹~",
+                            ];
+
+                            const speakerName =
+                                dialogues.names[locale]?.[objectType] ||
+                                (objectType === "cat1" ? "Cat" : "Another Cat");
+
+                            gameState.setInteractableObject(
+                                cat,
+                                "npc",
+                                {
+                                    content: content,
+                                    speakerName: speakerName,
+                                    speakerImage: null,
+                                }
+                            );
+                        });
+
+                        cat.onCollideEnd("player", () => {
+                            gameState.clearInteractableObject();
+                        });
+                        
+                        console.log(`🐱 ${objectType} 스프라이트 생성됨 at:`, cat.pos);
+                        continue;
+                    }
+
+                    // ball 처리 (spawnpoints 레이어에서)
+                    if (object.name === "ball") {
+                        console.log("⚽ 피구공 감지됨! (spawnpoints 레이어)");
+                        
+                        const ball = map.add([
+                            k.sprite("main-assets", {
+                                frame: 5296, // main.js에 정의된 ball 스프라이트 인덱스
+                            }),
+                            k.area({
+                                shape: new k.Rect(k.vec2(0), 24, 24),
+                            }),
+                            k.body({
+                                isStatic: true,
+                                mass: 1,
+                                restitution: 0.6,
+                            }),
+                            k.pos(object.x, object.y),
+                            k.z(1),
+                            "ball",
+                            "kickable",
+                            {
+                                objectType: "ball",
+                                lastKickTime: 0,
+                                isMoving: false,
+                            },
+                        ]);
+
+                        ball.onCollideUpdate("player", (player) => {
+                            if (!ball.isMoving) {
+                                kickBallOnCollision(k, ball, player);
+                            }
+                        });
+                        
+                        console.log("⚽ 피구공 스프라이트 생성됨 at:", ball.pos);
+                        continue;
+                    }
+
+                    // nca 처리 (spawnpoints 레이어에서)
+                    if (object.name === "nca") {
+                        console.log("📄 NCA 전단지 감지됨! (spawnpoints 레이어)");
+                        
+                        const nca = map.add([
+                            k.sprite("main-assets", {
+                                frame: 5386, // main.js에 정의된 nca 스프라이트 번호 사용
+                            }),
+                            k.area(),
+                            k.body({ isStatic: true }),
+                            k.pos(object.x, object.y),
+                            k.z(1),
+                            "nca",
+                            "interactive-object",
+                            { objectType: "nca" },
+                        ]);
+
+                        nca.onCollideUpdate("player", (player) => {
+                            const locale = gameState.getLocale();
+                            const content = objectDialogues[locale]?.["nca"] || [
+                                "NCA recruitment flyer.",
+                                "NCA 모집 전단지입니다.",
+                            ];
+
+                            const speakerName =
+                                objectDialogues.names[locale]?.["nca"] ||
+                                "NCA Flyer";
+
+                            gameState.setInteractableObject(
+                                nca,
+                                "object",
+                                {
+                                    content: content,
+                                    speakerName: speakerName,
+                                    speakerImage: null,
+                                }
+                            );
+                        });
+
+                        nca.onCollideEnd("player", () => {
+                            gameState.clearInteractableObject();
+                        });
+                        
+                        console.log("📄 NCA 스프라이트 생성됨 at:", nca.pos);
+                        continue;
+                    }
+
+                    // 편지 오브젝트 처리
+                    if (object.name.startsWith("letter")) {
+                        const letterType = object.name;
+                        const letter = map.add([
+                            k.sprite("main-assets", {
+                                anim: letterType,
+                            }),
+                            k.area(),
+                            k.body({ isStatic: true }),
+                            k.pos(object.x, object.y),
+                            k.z(1),
+                            "letter",
+                            { letterType },
+                        ]);
+
+                        letter.onCollideUpdate("player", (player) => {
+                            const locale = gameState.getLocale();
+                            const content = objectDialogues[locale]?.[
+                                letterType
+                            ] || [
+                                `This is ${letterType}`,
+                                `이것은 ${letterType}입니다`,
+                            ];
+
+                            const speakerName =
+                                objectDialogues.names[locale]?.[letterType] ||
+                                letterType;
+
+                            gameState.setInteractableObject(letter, "letter", {
+                                content: content,
+                                speakerName: speakerName,
+                                speakerImage: null,
+                            });
+                        });
+
+                        letter.onCollideEnd("player", (player) => {
+                            gameState.clearInteractableObject();
+                        });
+                        continue;
+                    }
+
+                    // Student NPC 처리
+                    if (object.name.startsWith("student")) {
+                        const studentType = object.name;
+                        const student = map.add([
+                            k.sprite("main-assets", {
+                                anim: studentType,
+                            }),
+                            k.area({
+                                shape: new k.Rect(k.vec2(0, -10), 16, 24), // Y 오프셋 -8로 콜라이더를 위로 이동
+                            }),
+                            k.body({ isStatic: true }),
+                            k.pos(object.x, object.y),
+                            k.z(1),
+                            "student",
+                            { studentType },
+                        ]);
+
+                        student.onCollideUpdate("player", (player) => {
+                            const locale = gameState.getLocale();
+                            const content = frontDialogues[locale]?.[studentType] || [
+                                `Hello! I'm ${studentType}.`,
+                                `안녕하세요! 저는 ${studentType}입니다.`,
+                            ];
+
+                            const speakerName =
+                                frontDialogues.names[locale]?.[studentType] ||
+                                studentType;
+
+                            gameState.setInteractableObject(student, "student", {
+                                content: content,
+                                speakerName: speakerName,
+                                speakerImage: null,
+                                onDialogStart: () => {
+                                    // 대화 시작 시 퀘스트 완료 체크
+                                    console.log(`[DEBUG] ${studentType}과 대화 시작 - 퀘스트 완료 체크`);
+                                    console.log(`[DEBUG] 현재 studentType: ${studentType}`);
+                                    completeQuestByTarget("npc", studentType);
+                                }
+                            });
+                        });
+
+                        student.onCollideEnd("player", (player) => {
+                            gameState.clearInteractableObject();
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                console.log("⚠️ Spawnpoints 레이어는 있지만 오브젝트가 없음");
+            }
+            continue;
+        }
+
+        // Handle regular tile layers with chunks system (infinite maps)
+        if (layer.chunks) {
+            console.log(`🧩 Processing chunks for layer: ${layer.name}`, layer.chunks.length);
+            // Infinite 맵의 chunks 처리
+            for (const chunk of layer.chunks) {
+                console.log(`📦 Processing chunk at (${chunk.x}, ${chunk.y}) size: ${chunk.width}x${chunk.height}`);
+                let tileIndex = 0;
+                let tilesAdded = 0;
+                for (let y = 0; y < chunk.height; y++) {
+                    for (let x = 0; x < chunk.width; x++) {
+                        const tile = chunk.data[tileIndex];
+                        tileIndex++;
+
+                        if (tile === 0) continue;
+
+                        // chunk의 절대 위치 계산
+                        const tileX = (chunk.x + x) * mapData.tilewidth;
+                        const tileY = (chunk.y + y) * mapData.tileheight;
+
+                        // upmost 레이어는 캐릭터보다 위에 배치 (z=3), cha 레이어는 캐릭터와 같은 레벨 (z=1), 다른 타일은 기본 (z=0)
+                        const zIndex = layer.name === "upmost" ? 3 : layer.name === "cha" ? 1 : 0;
+
+                        // front.json은 rpg_spritesheet_front.png를 사용하므로 main-assets 스프라이트 사용
+                        map.add([
+                            k.sprite("main-assets", { frame: tile - 1 }),
+                            k.pos(tileX, tileY),
+                            k.z(zIndex),
+                            // k.offscreen(), // 제거하여 모든 타일이 보이도록 함
+                        ]);
+                        tilesAdded++;
+                    }
+                }
+                console.log(`✅ Layer ${layer.name} chunk: ${tilesAdded} tiles added`);
+            }
+            continue;
+        }
+
+        // Handle regular tile layers (non-infinite maps)
+        if (layer.data) {
+            console.log(`🎨 Processing regular tile layer: ${layer.name}, tiles: ${layer.data.length}`);
+            let nbOfDrawnTiles = 0;
+            let tilesAdded = 0;
+            const tilePos = k.vec2(0, 0);
+            for (const tile of layer.data) {
+                if (nbOfDrawnTiles % layer.width === 0) {
+                    tilePos.x = 0;
+                    tilePos.y += mapData.tileheight;
+                } else {
+                    tilePos.x += mapData.tilewidth;
+                }
+
+                nbOfDrawnTiles++;
+
+                if (tile === 0) continue;
+
+                // upmost 레이어는 캐릭터보다 위에 배치 (z=3), cha 레이어는 캐릭터와 같은 레벨 (z=1), 다른 타일은 기본 (z=0)
+                const zIndex = layer.name === "upmost" ? 3 : layer.name === "cha" ? 1 : 0;
+
+                // front.json은 rpg_spritesheet_front.png를 사용하므로 main-assets 스프라이트 사용
+                map.add([
+                    k.sprite("main-assets", { frame: tile - 1 }),
+                    k.pos(tilePos),
+                    k.z(zIndex),
+                    // k.offscreen(), // 제거하여 모든 타일이 보이도록 함
+                ]);
+                tilesAdded++;
+            }
+            console.log(`✅ Layer ${layer.name}: ${tilesAdded} tiles added out of ${layer.data.length} total`);
+            continue;
+        }
+    }
+
+    // 모든 레이어 처리 후 플레이어가 생성되지 않았다면 기본 위치에 생성
+    if (!entities.player) {
+        console.log("🎮 플레이어가 생성되지 않음, 기본 위치에 생성");
+        entities.player = map.add(
+            generateFrontPlayerComponents(k, k.vec2(0, 0))
+        );
+    } else {
+        console.log("🎮 플레이어 생성 완료:", entities.player.pos);
+        
+        // 첫 번째 저장 데이터 생성 (플레이어가 front 씬에 진입했을 때)
+        try {
+            const playerName = gameState.playerName || "플레이어";
+            const existingSaves = gameDataManager.getSaveList();
+            
+            // 이미 front 씬 저장 데이터가 있는지 확인
+            const hasFrontSave = existingSaves.some(save => 
+                save.gameState && save.gameState.currentScene === "front"
+            );
+            
+            if (!hasFrontSave && playerName !== "플레이어") {
+                // 초기 저장 데이터 생성
+                const initialSaveData = gameDataManager.createSaveData(playerName);
+                initialSaveData.gameState.currentScene = "front";
+                initialSaveData.gameState.playerPosition = {
+                    x: entities.player.pos.x,
+                    y: entities.player.pos.y
+                };
+                initialSaveData.progressState.visitedScenes = ["prologue", "front"];
+                
+                // 저장
+                gameDataManager.saveToBrowser(initialSaveData);
+                console.log("💾 초기 저장 데이터 생성 완료:", initialSaveData.id);
+            }
+            
+            // 추가: 테스트용 더미 데이터 생성 (플레이어 스폰포인트 기준)
+            createFrontTestDummyData();
+            
+        } catch (error) {
+            console.error("❌ 저장 데이터 생성 중 오류:", error);
+        }
+    }
+
+    // 테스트용 더미 데이터 생성 함수 (front.js 스폰포인트 기준)
+    function createFrontTestDummyData() {
+        try {
+            const existingSaves = gameDataManager.getSaveList();
+            const testSaveExists = existingSaves.some(save => save.playerName === "테스트2");
+            
+            if (!testSaveExists && entities.player) {
+                console.log("🎯 front.js 테스트용 더미 데이터 생성");
+                
+                const currentPos = entities.player.pos;
+                const dummyData = gameDataManager.createSaveData("테스트2");
+                dummyData.gameState = {
+                    currentScene: "front",
+                    playerPosition: {
+                        x: currentPos.x,
+                        y: currentPos.y
+                    },
+                    playerDirection: "down",
+                    health: 100,
+                    inventory: [],
+                    questsCompleted: [],
+                    questsInProgress: [],
+                    flags: {},
+                    tutorialCompleted: true,
+                    prologueCompleted: true,
+                    introCompleted: true
+                };
+                
+                // 현재 시각으로 타임스탬프 업데이트
+                dummyData.timestamp = new Date().toISOString();
+                dummyData.lastPlayed = new Date().toISOString();
+                
+                gameDataManager.saveToBrowser(dummyData); // saveData → saveToBrowser 수정
+                console.log("✅ front.js 테스트용 더미 데이터 생성 완료:", dummyData);
+            }
+        } catch (error) {
+            console.error("❌ front.js 더미 데이터 생성 실패:", error);
+        }
+    }
+
+    // [DEBUG] 플레이어 엔티티 수 확인
+    const playerEntities = k.get("player");
+    console.log(`[DEBUG] 현재 플레이어 엔티티 수: ${playerEntities.length}`);
+    if (playerEntities.length > 1) {
+        console.error(`⚠️ 플레이어가 중복 생성되었습니다! ${playerEntities.length}개 발견`);
+        // 첫 번째 플레이어만 남기고 나머지 제거
+        for (let i = 1; i < playerEntities.length; i++) {
+            console.log(`[DEBUG] 중복 플레이어 ${i} 제거 중...`);
+            playerEntities[i].destroy();
+        }
+    }
+
+    // 플레이어 컨트롤을 즉시 활성화 (카메라 애니메이션과 독립적으로)
+    if (entities.player && entities.player.exists()) {
+        console.log("🎮 플레이어 컨트롤 즉시 활성화");
+        setPlayerControls(k, entities.player);
+    }
+
+    // 플레이어 존재 확인 후 이벤트 리스너 설정
+    if (entities.player && entities.player.exists()) {
+        // front 씬에서는 main_entrance를 통해 first로 이동
+        entities.player.onCollide("main_entrance", () => {
+            gameState.setPreviousScene("front");
+            k.go("first");
+        });
+        
+        // garage로 이동하는 문 추가
+        entities.player.onCollide("door_garage", () => {
+            console.log("🚗 Garage 문에 충돌 - garage 씬으로 이동");
+            k.play("boop-sfx"); // 문 열리는 효과음 (boop-sfx 사용)
+            gameState.setPreviousScene("front");
+            k.go("garage");
+        });
+    }
+
+    // 맵 크기 계산 (카메라 애니메이션에서 사용하기 위해 미리 정의)
+    const mapBounds = {
+        minX: -48 * 24, // 가장 왼쪽 chunk x * tilewidth
+        minY: -48 * 24, // 가장 위쪽 chunk y * tileheight  
+        maxX: (30 + 16) * 24, // 맵 너비를 고려한 최대 X
+        maxY: (20 + 16) * 24, // 맵 높이를 고려한 최대 Y
+    };
+
+    console.log("🗺️ 맵 경계:", mapBounds);
+
+    // 이전 씬이 tutorial일 때만 특별한 카메라 애니메이션 실행
+    console.log("🔍 카메라 애니메이션 조건 확인 - previousScene:", previousScene, "=== 'tutorial':", previousScene === "tutorial");
+    if (previousScene === "tutorial") {
+        console.log("🎬 Tutorial에서 진입 - 카메라 수직 이동 애니메이션 시작");
+        k.camScale(2); // 일반 스케일로 시작
+
+        // 플레이어 위치에서 시작
+        if (entities.player && entities.player.exists()) {
+            const playerPos = entities.player.pos;
+            k.camPos(playerPos);
+            
+            // 카메라 애니메이션 중에는 플레이어 컨트롤 일시적으로 비활성화
+            gameState.setFreezePlayer(true);
+            
+            // 맵 상단 위치 계산 (500픽셀 위로)
+            const mapTopY = playerPos.y - 600; // 플레이어 위치에서 600픽셀 위로
+            const topPosition = k.vec2(playerPos.x, mapTopY);
+            
+            console.log("📹 카메라가 위로 이동합니다:", playerPos, "→", topPosition);
+            
+            // 1단계: 위로 천천히 올라가기 (5초로 증가)
+            k.tween(k.camPos(), topPosition, 5.0, (val) => {
+                k.camPos(val);
+            }, k.easings.easeInOutQuad).then(() => {
+                console.log("📹 카메라가 위에 도달, 2초 대기 후 다시 내려갑니다");
+                
+                // 2단계: 2초 대기 후 플레이어 위치로 다시 내려오기 (4초로 증가)
+                k.wait(2, () => {
+                    k.tween(k.camPos(), playerPos, 4.0, (val) => {
+                        k.camPos(val);
+                    }, k.easings.easeInOutQuad).then(() => {
+                        // 카메라 애니메이션 완료 후 플레이어 대화 표시
+                        console.log("🎮 카메라 애니메이션 완료 - 플레이어 대화 시작");
+                        
+                        // 플레이어 이름 우선순위: 입력받은 이름 → 로그 저장된 이름 → 기본값 "플레이어"
+                        let playerName = gameState.playerName;
+                        if (!playerName || playerName.trim() === "") {
+                            // gameState에 없으면 자동 로드 시도
+                            console.log("🔍 플레이어 이름이 없어 자동 로드 시도");
+                            playerName = "플레이어"; // 최종 기본값
+                        }
+                        console.log("🎭 플레이어 대화 화자:", playerName);
+                        
+                        // 플레이어 대화 내용 (prologue에서 이어지는 내용)
+                        const playerDialogue = [
+                            "후... 드디어 학교에 도착했다.",
+                            "아까 그 목소리는 뭐였을까... 꿈이었나?",
+                            "아무튼 여기가 우리 학교구나. 생각보다 크네.",
+                            "새로운 학교... 어디부터 둘러봐야 할까?",
+                            "우측 상단에 편지 아이콘을 클릭해보자!",
+                        ];
+                        
+                        // 대화창 표시 (NPC 대화창과 동일한 스타일)
+                        dialog(
+                            k,
+                            k.vec2(250, 500), // NPC 대화창과 동일한 위치
+                            playerDialogue,
+                            {
+                                font: "galmuri", // 한국어 폰트
+                                speakerName: playerName, // 플레이어 이름을 화자로 표시
+                                speakerImage: null, // 플레이어 이미지는 없음
+                                onComplete: () => {
+                                    // 대화 완료 후 플레이어 컨트롤 활성화
+                                    console.log("🎮 플레이어 대화 완료 - 플레이어 컨트롤 재활성화");
+                                    gameState.setFreezePlayer(false);
+                                }
+                            }
+                        );
+                    });
+                });
+            });
+        }
+    } else {
+        console.log("🎬 다른 씬에서 진입 - 일반 카메라 스케일 적용");
+        // 다른 씬에서 올 때는 바로 일반 스케일(2배) 적용
+        k.camScale(2);
+        
+        // 플레이어 위치로 카메라 이동
+        if (entities.player && entities.player.exists()) {
+            k.camPos(entities.player.pos);
+        }
+    }
+
+    // 카메라 초기 위치 설정
+    if (entities.player && entities.player.exists()) {
+        k.camPos(entities.player.pos);
+    }
+
+    // 경계 기반 카메라 추적 시스템
+    const CAMERA_EDGE_BUFFER = 120; // 화면 가장자리 120px 반경
+    const CAMERA_SMOOTH_FACTOR = 0.1; // 카메라 부드러움 정도 (0.1 = 10%씩 이동)
+    const CAMERA_MIN_DISTANCE = 8; // 최소 이동 거리 (픽셀)
+    let targetCameraPos = k.camPos();
+    let lastPlayerPos = entities.player ? entities.player.pos.clone() : k.vec2(0, 0);
+
+    function updateCameraWithBoundaries() {
+        if (!entities.player || !entities.player.exists()) return;
+
+        const playerPos = entities.player.pos;
+        const currentCamPos = k.camPos();
+        const screenHalfWidth = k.width() / (2 * k.camScale().x);
+        const screenHalfHeight = k.height() / (2 * k.camScale().y);
+        
+        // 플레이어가 실제로 이동했을 때만 카메라 업데이트 계산
+        if (playerPos.dist(lastPlayerPos) < 1) return; // 1픽셀 이하 이동은 무시
+        
+        // 플레이어가 화면 가장자리 근처에 있는지 확인
+        const playerScreenPos = playerPos.sub(currentCamPos);
+        
+        let newTargetX = targetCameraPos.x;
+        let newTargetY = targetCameraPos.y;
+        let shouldUpdate = false;
+        
+        // X축 경계 확인 - 데드존을 더 크게 설정
+        if (playerScreenPos.x > screenHalfWidth - CAMERA_EDGE_BUFFER) {
+            newTargetX = playerPos.x - (screenHalfWidth - CAMERA_EDGE_BUFFER);
+            shouldUpdate = true;
+        } else if (playerScreenPos.x < -screenHalfWidth + CAMERA_EDGE_BUFFER) {
+            newTargetX = playerPos.x + (screenHalfWidth - CAMERA_EDGE_BUFFER);
+            shouldUpdate = true;
+        }
+        
+        // Y축 경계 확인 - 데드존을 더 크게 설정
+        if (playerScreenPos.y > screenHalfHeight - CAMERA_EDGE_BUFFER) {
+            newTargetY = playerPos.y - (screenHalfHeight - CAMERA_EDGE_BUFFER);
+            shouldUpdate = true;
+        } else if (playerScreenPos.y < -screenHalfHeight + CAMERA_EDGE_BUFFER) {
+            newTargetY = playerPos.y + (screenHalfHeight - CAMERA_EDGE_BUFFER);
+            shouldUpdate = true;
+        }
+        
+        // 타겟 위치 업데이트
+        if (shouldUpdate) {
+            // 맵 경계 내에서 카메라 제한
+            newTargetX = Math.max(mapBounds.minX + screenHalfWidth, 
+                                 Math.min(mapBounds.maxX - screenHalfWidth, newTargetX));
+            newTargetY = Math.max(mapBounds.minY + screenHalfHeight, 
+                                 Math.min(mapBounds.maxY - screenHalfHeight, newTargetY));
+            
+            targetCameraPos = k.vec2(newTargetX, newTargetY);
+        }
+        
+        // 부드러운 카메라 이동
+        const distance = targetCameraPos.dist(currentCamPos);
+        if (distance > CAMERA_MIN_DISTANCE) {
+            const newCamPos = currentCamPos.lerp(targetCameraPos, CAMERA_SMOOTH_FACTOR);
+            k.camPos(newCamPos);
+        }
+        
+        lastPlayerPos = playerPos.clone();
+    }
+
+    // 매 프레임마다 카메라 업데이트
+    k.onUpdate(updateCameraWithBoundaries);
+
+    // UI 요소들 숨김 - front 씬에서는 UI 없음
+    // healthBar(k);
+    // watchPlayerHealth(k);
+
+    let isLocaleLocked = { value: false };
+    let isMuteLocked = { value: false };
+
+    // 키보드 단축키
+    k.onKeyPress("l", () => {
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onKeyPress("ㅣ", () => {
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onKeyPress("m", () => {
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    k.onKeyPress("ㅡ", () => {
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    // 게임패드 컨트롤
+    k.onGamepadButtonPress("lshoulder", () => {
+        console.log("🎮 L버튼 눌림 - 언어 변경");
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onGamepadButtonPress("rshoulder", () => {
+        console.log("🎮 R버튼 눌림 - 음소거 토글");
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    k.onGamepadButtonPress("ltrigger", () => {
+        console.log("🎮 L2 트리거 눌림 - 언어 변경");
+        toggleLocale(k, gameState, isLocaleLocked);
+    });
+
+    k.onGamepadButtonPress("rtrigger", () => {
+        console.log("🎮 R2 트리거 눌림 - 음소거 토글");
+        toggleMute(k, gameState, isMuteLocked);
+    });
+
+    // 1번 키로 메인 메뉴 이동
+    setupMainMenuShortcut(k, gameState);
+
+    // 상호작용 키 (스페이스, 엔터) 감지로 퀘스트 완료 체크
+    k.onKeyPress("space", () => {
+        const interactableData = gameState.getInteractableData();
+        if (interactableData && interactableData.onDialogStart) {
+            interactableData.onDialogStart();
+        }
+    });
+    
+    k.onKeyPress("enter", () => {
+        const interactableData = gameState.getInteractableData();
+        if (interactableData && interactableData.onDialogStart) {
+            interactableData.onDialogStart();
+        }
+    });
+
+    // 퀘스트 UI 추가 및 시스템 초기화
+    questSystem = setupQuestUI(k, gameState);
+    
+    // ==============================
+    // 실시간 자동 저장 시스템 (10초마다)
+    // ==============================
+    
+    let lastAutoSaveTime = Date.now();
+    const AUTO_SAVE_INTERVAL = 10000; // 10초
+    
+    // 자동저장 알림 UI
+    let autoSaveNotification = null;
+    
+    function showAutoSaveNotification() {
+        // 기존 알림이 있다면 제거
+        if (autoSaveNotification) {
+            k.destroy(autoSaveNotification);
+        }
+        
+        // 새 알림 생성
+        autoSaveNotification = k.add([
+            k.text("저장되었습니다.", { 
+                size: 14, // 8에서 14로 변경 (크기 증가)
+                font: "galmuri" 
+            }),
+            k.pos(10, 10), // 좌측 상단
+            k.color(138, 43, 226), // 보라색으로 변경
+            k.z(10000), // 최상위 레이어
+            k.fixed(),
+            k.opacity(1)
+        ]);
+        
+        // 3초 후 페이드 아웃
+        k.wait(2, () => {
+            if (autoSaveNotification) {
+                k.tween(autoSaveNotification.opacity, 0, 1, (val) => {
+                    if (autoSaveNotification) {
+                        autoSaveNotification.opacity = val;
+                    }
+                }).then(() => {
+                    if (autoSaveNotification) {
+                        k.destroy(autoSaveNotification);
+                        autoSaveNotification = null;
+                    }
+                });
+            }
+        });
+    }
+    
+    function performAutoSave() {
+        try {
+            const playerName = gameState.playerName;
+            if (!playerName || playerName.trim() === "" || playerName === "플레이어") {
+                console.log("⏰ 자동저장 건너뜀: 유효한 플레이어 이름 없음");
+                return;
+            }
+            
+            // 현재 플레이어 위치 가져오기
+            const currentPosition = entities.player ? {
+                x: Math.round(entities.player.pos.x),
+                y: Math.round(entities.player.pos.y)
+            } : { x: 0, y: 0 };
+            
+            // 현재 저장 슬롯이 있는지 확인
+            let currentSaveSlot = gameDataManager.getCurrentSaveSlot();
+            
+            if (!currentSaveSlot) {
+                // 플레이어 이름으로 기존 저장 데이터 찾기
+                const existingSaves = gameDataManager.getSaveList();
+                const playerSave = existingSaves.find(save => save.playerName === playerName);
+                
+                if (playerSave) {
+                    currentSaveSlot = playerSave.id;
+                    gameDataManager.setCurrentSaveSlot(currentSaveSlot);
+                    console.log("🔄 기존 저장 슬롯 연결:", currentSaveSlot);
+                } else {
+                    // 새로운 저장 데이터 생성
+                    const newSaveData = gameDataManager.createSaveData(playerName);
+                    currentSaveSlot = newSaveData.id;
+                    console.log("✨ 새로운 저장 슬롯 생성:", currentSaveSlot);
+                }
+            }
+            
+            // 실시간 게임 상태 업데이트
+            const updateResult = gameDataManager.updateCurrentSave(
+                gameState,
+                window.questItems ? { questItems: window.questItems } : null,
+                currentPosition,
+                "front"
+            );
+            
+            if (updateResult) {
+                console.log("💾 자동저장 완료:", {
+                    playerName: playerName,
+                    position: currentPosition,
+                    time: new Date().toLocaleTimeString('ko-KR')
+                });
+                
+                // 자동저장 알림 표시
+                showAutoSaveNotification();
+            } else {
+                console.warn("⚠️ 자동저장 실패");
+            }
+            
+        } catch (error) {
+            console.error("❌ 자동저장 중 오류:", error);
+        }
+    }
+
+    // 전역 함수로 노출
+    window.performAutoSave = performAutoSave;
+    window.showQuestCompletionMessage = showQuestCompletionMessage;
+    window.showQuestAddedMessage = showQuestAddedMessage;
+    
+    // 자동 저장 루프 (onUpdate 사용)
+    k.onUpdate(() => {
+        const now = Date.now();
+        if (now - lastAutoSaveTime >= AUTO_SAVE_INTERVAL) {
+            performAutoSave();
+            lastAutoSaveTime = now;
+        }
+    });
+    
+    // 씬 종료 시 마지막 저장
+    k.onSceneLeave(() => {
+        console.log("🧹 Front 씬 정리 시작");
+        
+        // 마지막 자동 저장 수행
+        console.log("💾 씬 종료 전 마지막 저장 수행");
+        performAutoSave();
+        
+        // window.previousKeyHandler가 있다면 제거
+        if (window.previousKeyHandler) {
+            document.removeEventListener('keydown', window.previousKeyHandler, true);
+            document.removeEventListener('keyup', window.previousKeyHandler, true);
+            window.previousKeyHandler = null;
+            console.log("✅ Front 씬 키보드 이벤트 리스너 정리 완료");
+        }
+        
+        console.log("✅ Front 씬 정리 완료");
+    });
+    
+    } catch (error) {
+        console.error("❌ Front 씬 로드 중 오류:", error);
+        // 오류 발생 시 기본 설정으로 진행
+        if (!map) {
+            map = k.add([k.pos(0, 0)]);
+        }
+        entities.player = map.add(
+            generateFrontPlayerComponents(k, k.vec2(0, 0))
+        );
+        setPlayerControls(k, entities.player);
+        k.camScale(1.5); // 줌아웃: 3 → 1.5로 변경
+        k.camPos(entities.player.worldPos());
+    }
+
+    // 퀘스트 완료 처리 함수들
+    function completeQuestByTarget(targetType, targetId) {
+        console.log(`[DEBUG] completeQuestByTarget 호출됨 - 타입: ${targetType}, 대상: ${targetId}`);
+        
+        const currentQuestItems = window.questItems || questItems;
+        console.log(`[DEBUG] 현재 퀘스트 목록:`, currentQuestItems);
+        
+        currentQuestItems.forEach((quest, index) => {
+            console.log(`[DEBUG] 퀘스트 ${index}: ${quest.title}, 완료됨: ${quest.completed}, targetNpc: ${quest.targetNpc}, targetObject: ${quest.targetObject}`);
+            
+            if (!quest.completed) {
+                // NPC 대화로 완료되는 퀘스트
+                if (targetType === "npc" && quest.targetNpc === targetId) {
+                    console.log(`[DEBUG] 퀘스트 완료 조건 충족 - NPC: ${targetId}`);
+                    quest.completed = true;
+                    showQuestCompletionMessage(quest.title);
+                    
+                    // 퀘스트 아이콘 상태 업데이트 (전역 함수 사용)
+                    if (window.updateQuestIcon) {
+                        window.updateQuestIcon();
+                    }
+                    
+                    // 자동 저장 (전역 함수 사용)
+                    if (window.performAutoSave) {
+                        window.performAutoSave();
+                    }
+                    
+                    console.log(`✅ 퀘스트 완료: ${quest.title} (대화 대상: ${targetId})`);
+                }
+                
+                // 오브젝트 상호작용으로 완료되는 퀘스트
+                if (targetType === "object" && quest.targetObject === targetId) {
+                    console.log(`[DEBUG] 퀘스트 완료 조건 충족 - 오브젝트: ${targetId}`);
+                    quest.completed = true;
+                    showQuestCompletionMessage(quest.title);
+                    
+                    // 퀘스트 아이콘 상태 업데이트 (전역 함수 사용)
+                    if (window.updateQuestIcon) {
+                        window.updateQuestIcon();
+                    }
+                    
+                    // 자동 저장 (전역 함수 사용)
+                    if (window.performAutoSave) {
+                        window.performAutoSave();
+                    }
+                    
+                    console.log(`✅ 퀘스트 완료: ${quest.title} (상호작용 대상: ${targetId})`);
+                }
+            }
+        });
+    }
+
+    // 글로벌 이벤트 핸들러
+    window.completeQuestByTarget = completeQuestByTarget;
+}
