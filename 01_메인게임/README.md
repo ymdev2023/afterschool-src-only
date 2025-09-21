@@ -1,282 +1,49 @@
-# AFTERSCHOOL - 2D 탑다운 RPG 게임 🎮
+# AFTERSCHOOL 01 : 2010년대 학창시절 추억을 강제 소환하는 좌충우돌 학교 RPG 웹 게임
 
-## 📋 프로젝트 개요
+메인 게임은 "2010년대 학창시절 추억을 강제 소환하는 좌충우돌 학교 RPG 웹 게임"이라는 콘셉트로 제작한 웹 기반 픽셀 아트 프로젝트입니다. Kaboom.js를 사용해 브라우저에서 바로 플레이할 수 있으며, [뉴콘텐츠아카데미 장기 2기 SHOWCASE] 전시작 중 하나로 2024년 3월부터 8월까지 5개월 간 팀을 이끌며 완성했습니다.
 
-**AFTERSCHOOL**은 방과후 학교를 배경으로 한 2D 탑다운 RPG 웹 게임입니다. JavaScript와 Kaboom.js 게임 엔진을 사용하여 개발되었으며, Electron을 통해 데스크톱 앱으로도 배포 가능합니다.
+## 프로젝트 개요
+- **전시 명**: 뉴콘텐츠아카데미 장기 2기 SHOWCASE
+- **참여 기간**: 2024.03 ~ 2024.08 (5개월)
+- **역할**: PO & Tech Lead
+- **전시 구성**: 웹 기반 메인 게임 + 4개의 서브 게임(총 5개의 오락실 감성 콘텐츠)
+- **전시 경험 디자인**: 빙고판 리플렛으로 시작되는 참여형 여정 → 100명 이용자 평가단에게 호평 확보
 
-### 🎮 게임 특징
-- **장르**: 2D 탑다운 RPG
-- **배경**: 방과후 학교 환경
-- **플랫폼**: 웹 브라우저, Electron 데스크톱 앱
-- **개발 언어**: JavaScript (ES6+)
-- **게임 엔진**: Kaboom.js
+## 🔧 핵심 구현 내용
+- **웹 기반 RPG 엔진 구축**: Kaboom.js 위에 타일맵, 캐릭터 이동, 대화, 인벤토리 등 RPG 필수 시스템을 직접 설계.
+- **픽셀 아트 파이프라인**: Aseprite로 제작한 스프라이트/애니메이션을 Kaboom.js 로더와 연동해 레트로 감성 유지.
+- **멀티 게임 통합 시스템**: JavaScript 모듈 시스템으로 5가지 미니 게임을 하나의 허브에서 자연스럽게 전환.
+- **전시 UX 최적화**: 터치스크린 대응 UI, 짧은 튜토리얼, 즉시 플레이 플로우로 관람객 회전율 최적화.
 
-## 🛠 기술 스택
+## 🚧 주요 트러블슈팅
+- **브라우저 호환성**: 전시 현장별 다른 브라우저에서도 안정적으로 구동되도록 폴리필 & fallback 로직을 구성.
+- **렌더링 성능**: Kaboom.js의 렌더링 병목을 스프라이트 아틀라스 + 배치 렌더링으로 해결해 프레임 드랍 최소화.
+- **실시간 협업**: Git + Figma 동기화 파이프라인으로 아티스트/개발자 간 에셋을 실시간 공유.
+- **타이트한 일정**: 6~8월에 집중된 개발 기간을 애자일 스프린트로 운영하며 필수 기능을 우선 확보.
 
--   **Engine**: Kaboom.js
--   **Language**: JavaScript (ES6+)
--   **Desktop**: Electron
--   **Graphics**: Custom pixel art sprites
--   **Audio**: Web Audio API
--   **Build**: Electron Builder
+## 개발 메모
+- 메인 게임은 JavaScript + Kaboom.js로 제작, 서브 게임은 Unity/Python 등 다양한 툴로 확장해 전시 재미를 구성했습니다.
+- 학교 내 여러 장소를 탐험하며 NPC와 상호작용하는 플레이에 집중했고, 브라우저에서 즉시 즐길 수 있도록 빌드했습니다.
+- 전시용으로 플레이타임이 짧게 설계되어 추후 콘텐츠 보강이 필요하며, Kaboom.js 엔진 한계로 조작감이 다소 가벼운 편입니다.
+- 짧은 기간 동안 완성도 있는 웹 RPG를 구현한 경험 자체가 팀과 개인 모두에게 의미 있는 성과였습니다.
 
-## 🎮 주요 기능
+## 전시 아카이브
+- 전시 현장 스냅샷, 다큐멘터리 영상, 메인 게임 플레이, Windows 98 감성 브랜디드 페이지 링크 버튼을 제공했습니다.
+- 관련 자료는 전시 저장소에 보관되어 있으며, 현장 데모와 동일한 UI 플로우를 따라가도록 구성했습니다.
 
--   **씬 시스템**: 인트로, 메인메뉴, 튜토리얼, 크레딧, 게임월드
--   **다국어 지원**: 한국어/영어 전환
--   **대화 시스템**: NPC와의 상호작용
--   **퀘스트 시스템**: 체계적인 퀘스트 관리 및 진행
--   **UI 시스템**: 통합된 UI 관리 및 컴포넌트
--   **사운드**: BGM 및 효과음
--   **컨트롤**: 키보드 + 게임패드 지원
-
-## 🏗️ 프로젝트 구조
-
-```
-afterschoolrpgweb/
-├── src/                          # 소스 코드 메인 디렉토리
-│   ├── main.js                   # 메인 엔트리 포인트
-│   ├── kaboomContext.js          # Kaboom.js 컨텍스트 설정
-│   ├── utils.js                  # 공통 유틸리티 함수들
-│   ├── scenes/                   # 게임 씬(장면) 모듈들
-│   │   ├── title.js              # 타이틀 화면
-│   │   ├── intro.js              # 인트로 씬
-│   │   ├── tutorial.js           # 튜토리얼 씬
-│   │   ├── front.js              # 학교 앞마당
-│   │   ├── first.js              # 1층 복도
-│   │   ├── second.js             # 2층 복도
-│   │   ├── class1.js             # 1학년 교실
-│   │   ├── class2.js             # 2학년 교실
-│   │   ├── restroom.js           # 화장실
-│   │   ├── restaurant.js         # 식당
-│   │   ├── garage.js             # 차고
-│   │   ├── health.js             # 보건실
-│   │   └── credits.js            # 크레딧
-│   ├── systems/                  # 게임 시스템 모듈들
-│   │   ├── autoSaveManager.js    # 자동 저장 시스템
-│   │   ├── gameDataManager.js    # 게임 데이터 관리
-│   │   ├── inventoryManager.js   # 인벤토리 시스템
-│   │   ├── gamepadManager.js     # 게임패드 지원
-│   │   └── cameraManager.js      # 카메라 제어
-│   ├── entities/                 # 게임 엔티티 (캐릭터, 오브젝트)
-│   ├── uiComponents/             # UI 컴포넌트들
-│   ├── content/                  # 게임 콘텐츠 (대화, 스토리)
-│   ├── state/                    # 게임 상태 관리
-│   └── scene-assets/             # 씬별 에셋 정의
-├── assets/                       # 게임 리소스
-│   ├── images/                   # 이미지 파일들
-│   ├── sounds/                   # 사운드 파일들
-│   └── fonts/                    # 폰트 파일들
-├── index.html                    # 메인 HTML 파일
-├── electron-main.js              # Electron 메인 프로세스
-└── package.json                  # 프로젝트 설정 및 의존성
-```
-
-## 🚀 주요 구현 내용
-
-### 1. 게임 엔진 및 기술 스택
-- **Kaboom.js**: 2D 게임 개발을 위한 JavaScript 게임 엔진
-- **Electron**: 크로스 플랫폼 데스크톱 앱 지원
-- **ES6 모듈**: 모던 JavaScript 모듈 시스템 활용
-- **Canvas API**: 커스텀 렌더링 및 이펙트
-
-### 2. 게임 시스템 아키텍처
-
-#### 씬(Scene) 기반 구조
-```javascript
-// main.js - 씬 등록 예시
-k.scene("title", title);
-k.scene("front", front);
-k.scene("tutorial", tutorial);
-```
-
-#### 상태 관리 시스템
-- **gameState**: 전역 게임 상태 관리
-- **autoSaveManager**: 자동 저장 기능
-- **gameDataManager**: 게임 데이터 영속성
-
-#### 오디오 시스템
-```javascript
-// 배경음악 및 효과음 관리
-k.loadSound("title-bgm", "assets/sounds/title-bgm.mp3");
-k.loadSound("confirm-beep-sfx", "assets/sounds/confirmbeep-sfx.wav");
-```
-
-### 3. 핵심 기능 구현
-
-#### 캐릭터 이동 및 충돌 시스템
-- 8방향 이동 지원
-- 타일 기반 충돌 검사
-- 부드러운 애니메이션
-
-#### 대화 시스템
-- 순차적 텍스트 출력
-- 캐릭터별 음성 효과 (Animalese 스타일)
-- 선택지 기반 상호작용
-
-#### 인벤토리 시스템
-- 아이템 수집 및 관리
-- 퀘스트 아이템 추적
-- 저장/로드 지원
-
-#### 자동 저장 시스템
-```javascript
-// autoSaveManager.js
-export class AutoSaveManager {
-    static save() {
-        const saveData = {
-            currentScene: gameState.currentScene,
-            playerPosition: gameState.playerPosition,
-            inventory: gameState.inventory,
-        };
-        localStorage.setItem('afterschool-save', JSON.stringify(saveData));
-    }
-}
-```
-
-## 🛠️ 빌드 및 실행
-
-### 개발 환경 실행
+## 빌드 & 실행
 ```bash
-# 의존성 설치
+# 설치
 npm install
 
-# Electron으로 실행
-npm run electron
-```
+# 개발 서버
+npm run dev
 
-### 프로덕션 빌드
-```bash
-# Windows 빌드
-npm run build-win
+# 프로덕션 빌드
+npm run build
 
-# macOS 빌드
-npm run build-mac
-
-# 전체 플랫폼 빌드
+# 전시용 Electron 패키징
 npm run dist
 ```
 
-## 🔧 기술적 도전과 해결
-
-### 1. 메모리 최적화
-**문제**: 큰 이미지 파일로 인한 메모리 사용량 증가
-**해결**:
-- 타이틀 화면에서 Canvas API로 직접 렌더링
-- 불필요한 스프라이트 로딩 제거
-- 이미지 압축 및 최적화
-
-```javascript
-// title.js - Canvas를 활용한 직접 렌더링
-const canvas = document.createElement('canvas');
-const ctx = canvas.getContext('2d');
-// 큰 이미지들을 Canvas로 직접 처리하여 메모리 절약
-```
-
-### 2. 크로스 플랫폼 호환성
-**문제**: 웹과 Electron 환경에서의 다른 동작
-**해결**:
-- 조건부 로딩 시스템 구현
-- 플랫폼별 설정 분리
-- 일관된 API 인터페이스 제공
-
-### 3. 게임패드 지원
-**문제**: 다양한 게임패드 기기 호환성
-**해결**:
-```javascript
-// gamepadManager.js
-export const gamepadManager = {
-    init() {
-        window.addEventListener("gamepadconnected", this.onGamepadConnected);
-        window.addEventListener("gamepaddisconnected", this.onGamepadDisconnected);
-    },
-    // 표준화된 버튼 매핑 구현
-};
-```
-
-### 4. 사운드 시스템 최적화
-**문제**: 사운드 파일 로딩 지연 및 메모리 사용
-**해결**:
-- 지연 로딩(Lazy Loading) 구현
-- 사운드 풀링 시스템
-- 압축된 오디오 형식 사용
-
-## 🎯 트러블슈팅 사례
-
-### 1. Kaboom.js 버전 호환성 문제
-**증상**: 특정 API가 예상과 다르게 동작
-**원인**: Kaboom.js 버전 업데이트로 인한 API 변경
-**해결**:
-- 안정된 버전으로 고정
-- 레거시 API 래퍼 함수 구현
-
-### 2. Electron 빌드 최적화
-**증상**: 빌드 파일 크기가 과도하게 큼
-**원인**: 불필요한 의존성 및 에셋 포함
-**해결**:
-```json
-// package.json - build 설정 최적화
-"build": {
-  "files": [
-    "**/*",
-    "!**/*.{py,md}",
-    "!node_modules/.cache/**/*"
-  ]
-}
-```
-
-### 3. 게임 상태 동기화 문제
-**증상**: 씬 전환 시 상태 불일치
-**원인**: 비동기 상태 업데이트 타이밍 이슈
-**해결**:
-- 중앙화된 상태 관리 시스템 구현
-- 상태 변경 시 검증 로직 추가
-
-### 4. 모바일 터치 지원
-**증상**: 모바일에서 조작 불가
-**원인**: 터치 이벤트 미지원
-**해결**:
-- 가상 D-pad 구현
-- 터치 제스처 인식 시스템 추가
-
-## 📈 성능 최적화
-
-### 1. 에셋 로딩 최적화
-- 필요한 에셋만 선택적 로딩
-- 이미지 압축 및 최적화
-- 사운드 파일 형식 최적화
-
-### 2. 렌더링 최적화
-- 오프스크린 캔버스 활용
-- 불필요한 렌더링 호출 제거
-- 프레임레이트 제한
-
-### 3. 메모리 관리
-- 가비지 컬렉션 최적화
-- 이벤트 리스너 정리
-- 텍스처 메모리 관리
-
-## 🎨 디자인 패턴 및 아키텍처
-
-### 1. 모듈 패턴
-각 시스템을 독립적인 모듈로 분리하여 유지보수성 향상
-
-### 2. 옵저버 패턴
-게임 상태 변경 시 관련 시스템들에 자동 알림
-
-### 3. 팩토리 패턴
-엔티티 생성을 위한 재사용 가능한 팩토리 함수들
-
-### 4. 싱글톤 패턴
-게임 상태 및 매니저 클래스들의 전역 접근 보장
-
-## 📝 향후 개선 계획
-
-1. **멀티플레이어 지원**: WebSocket을 활용한 실시간 멀티플레이어
-2. **모바일 최적화**: PWA 기능 및 터치 인터페이스 개선
-3. **콘텐츠 확장**: 추가 씬 및 스토리라인 구현
-4. **성능 모니터링**: 실시간 성능 지표 수집 시스템
-
----
-
-> 이 프로젝트는 개인 포트폴리오 목적으로 공개되었으며, 게임의 핵심 소스코드와 구조를 포함하고 있습니다.
+Kaboom.js 프로젝트 루트에서 명령을 실행하면 로컬 미니 서버(`npm run dev`)로 브라우저 플레이가 가능하며, `npm run dist` 명령으로 전시용 데스크톱 빌드도 만들 수 있습니다.
