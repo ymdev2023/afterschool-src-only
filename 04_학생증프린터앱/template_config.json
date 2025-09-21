@@ -1,0 +1,41 @@
+{
+  "template_info": {
+    "description": "포토샵으로 제작된 학생증 템플릿 설정",
+    "usage": "포토샵에서 배경을 만들고 사진/텍스트 위치를 이 파일에 설정하세요"
+  },
+  "photo_area": {
+    "x": 50,
+    "y": 80,
+    "width": 120,
+    "height": 150,
+    "description": "사진이 들어갈 영역 (픽셀 단위)",
+    "note": "포토샵에서 사진 영역의 좌상단 좌표(x,y)와 크기(width,height)를 측정하여 입력"
+  },
+  "school_name_area": {
+    "x": 200,
+    "y": 120,
+    "font_size": 18,
+    "color": [0, 0, 0],
+    "align": "center",
+    "description": "학교명이 들어갈 위치 및 스타일",
+    "note": "예: 은하여자고등학교"
+  },
+  "grade_class_area": {
+    "x": 200,
+    "y": 150,
+    "font_size": 16,
+    "color": [0, 0, 0],
+    "align": "center",
+    "description": "학년/반이 들어갈 위치 및 스타일",
+    "note": "예: 3학년 2반"
+  },
+  "name_area": {
+    "x": 200,
+    "y": 180,
+    "font_size": 24,
+    "color": [0, 0, 0],
+    "align": "center",
+    "description": "이름이 들어갈 위치 및 스타일",
+    "note": "align은 'left', 'center', 'right' 중 선택"
+  }
+}
