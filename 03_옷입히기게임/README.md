@@ -2,6 +2,9 @@
 
 본 폴더는 `AFTERSCHOOL` 프로젝트의 옷입히기 미니게임을 구현할 때 필요한 핵심 스크립트만 정리한 버전입니다. 메인 프로젝트와 동일한 말투와 구성으로 정리했으며, 실제 씬에 붙어 있는 오브젝트의 핵심 로직을 그대로 옮겨 놓았습니다.
 
+## 🎥 플레이 영상
+- [실행 영상 보기](https://youtube.com/shorts/8AI1eVJTp2w)
+
 ## 구성
 - `Scripts/Data` : 캐릭터/의상 정보(`CharacterData`, `MainSceneCharacterData`, `MainSceneClothingData`)를 다루는 스크립트.
 - `Scripts/Managers` : 메인 씬 로직(`MainSceneManager`), 의상 생성(`ClothingSpriteManager`), 팝업, 사운드 등을 총괄하는 매니저 집합.
